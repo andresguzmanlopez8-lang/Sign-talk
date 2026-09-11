@@ -20,6 +20,8 @@ Mobile app for bidirectional translation between Sign Language (LSM/ASL) and Spo
 7. **Frases Favoritas**: ⭐ on any chat bubble saves the phrase; horizontal favorites row above the composer sends it again as Text→Sign in one tap (long-press removes).
 8. **Modo Aprendizaje (Learn tab 🎓)**: Daily lesson of 5 signs (deterministic per user/day, prioritizes unlearned signs). 4-option quiz with feedback. Streak (🔥) counted once per day, resets if a day is skipped; best streak, learned count, lessons completed.
 9. **Historial Exportable**: 📄 in translator header builds a printable PDF of the whole chat (expo-print). Native: share sheet via expo-sharing. Web: print dialog.
+10. **Enviar a Contactos**: 📤 on any bubble opens ContactPicker bottom sheet (src/components/ContactPicker.tsx): contacts permission flow (check → explain → request → blocked → Open Settings), searchable contact list (expo-contacts), manual number fallback (web/denied). Send via WhatsApp (wa.me link) or SMS (sms: link). PDF → share sheet (WhatsApp appears there).
+11. **Ilustraciones por palabra**: every word entry has an `emoji` field rendered as a large illustration in dictionary cards, detail modal and quiz (letters keep GIFs). Seed upserts all entries with `$set` on startup.
 
 ## Backend Endpoints (/api)
 - `POST /auth/send-otp`, `POST /auth/verify-otp`, `GET /auth/me`, `POST /auth/onboard`, `PATCH /auth/profile`

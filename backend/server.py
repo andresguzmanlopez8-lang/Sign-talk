@@ -327,6 +327,12 @@ def _seed_dictionary_data():
         ("Cansado", "Manos curvadas en el pecho caen hacia abajo y afuera."),
         ("Despacio", "Una mano se desliza lentamente por el dorso de la otra."),
     ]
+    WORD_EMOJI = [
+        "🙋", "🙏", "👍", "👎", "🤲", "😔", "❤️", "🤝",
+        "🌅", "🌙", "👋", "👨‍👩‍👧", "👩", "👨", "🏠", "🍽️", "🥤", "💧",
+        "🆘", "💼", "🏫", "📅", "⏭️", "⏮️", "😊", "😠", "😄", "😢",
+        "🩺", "💰", "⏰", "🪪", "💡", "📚", "🚻", "📱", "🥱", "🐢",
+    ]
     for i, (w, d) in enumerate(common_words_en):
         entries.append({
             "id": f"asl-w-{i}",
@@ -334,6 +340,7 @@ def _seed_dictionary_data():
             "label": w,
             "kind": "word",
             "description": d,
+            "emoji": WORD_EMOJI[i],
             "gif_url": None,
             "image_url": "https://images.unsplash.com/photo-1585577028863-35a3349c60db?w=400",
         })
@@ -344,6 +351,7 @@ def _seed_dictionary_data():
             "label": w,
             "kind": "word",
             "description": d,
+            "emoji": WORD_EMOJI[i],
             "gif_url": None,
             "image_url": "https://images.unsplash.com/photo-1585577028863-35a3349c60db?w=400",
         })
@@ -351,12 +359,11 @@ def _seed_dictionary_data():
 
 @app.on_event("startup")
 async def seed():
+    from pymongo import UpdateOne
     entries = _seed_dictionary_data()
-    existing = set(await db.dictionary.distinct("id"))
-    missing = [e for e in entries if e["id"] not in existing]
-    if missing:
-        await db.dictionary.insert_many(missing)
-        logging.info(f"Seeded {len(missing)} new dictionary entries")
+    ops = [UpdateOne({"id": e["id"]}, {"$set": e}, upsert=True) for e in entries]
+    res = await db.dictionary.bulk_write(ops)
+    logging.info(f"Dictionary seed: {res.upserted_count} inserted, {res.modified_count} updated")
 
 @api_router.get("/dictionary")
 async def get_dictionary(language: Optional[str] = None, q: Optional[str] = None, letter: Optional[str] = None):

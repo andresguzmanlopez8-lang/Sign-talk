@@ -106,3 +106,8 @@
 - Learning mode: GET /api/learn/today, POST /api/learn/complete (streak counted once/day), GET /api/learn/progress; new tab "Aprender" (app/(tabs)/learn.tsx) with 5-question quiz.
 - PDF export: 📄 button in translator header (src/exportChat.ts, expo-print). Web opens print dialog; native uses share sheet.
 - Credentials: any phone, OTP 123456. Login testIDs: phone-input, otp-0..otp-5; onboarding name placeholder "María López".
+
+## Iteration 3 — main agent
+- Contacts sharing: 📤 button (share-<msgId>) on bubbles → ContactPicker (testIDs: contact-picker, contacts-perm, request-contacts, open-settings, contact-search, contact-<id>, manual-phone, manual-continue, send-options, send-whatsapp, send-sms, change-contact, contact-picker-close). Web = manual number only (expo-contacts unsupported).
+- Word emoji illustrations: dictionary entries kind=word now include `emoji`; rendered in dictionary cards (emoji-<id>), detail modal, quiz (quiz-emoji). Dictionary now 129 entries (38 words/lang).
+- Seed changed to bulk upsert ($set by id) on startup.

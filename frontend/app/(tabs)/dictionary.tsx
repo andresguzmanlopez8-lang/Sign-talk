@@ -126,11 +126,17 @@ export default function Dictionary() {
           renderItem={({ item }) => (
             <Pressable style={styles.card} onPress={() => setSelected(item)} testID={`card-${item.id}`}>
               <View style={styles.cardImg}>
-                <Image
-                  source={{ uri: item.gif_url || item.image_url }}
-                  style={{ width: "100%", height: "100%" }}
-                  contentFit="cover"
-                />
+                {item.emoji ? (
+                  <View style={styles.emojiBox} testID={`emoji-${item.id}`}>
+                    <Text style={styles.emojiCard}>{item.emoji}</Text>
+                  </View>
+                ) : (
+                  <Image
+                    source={{ uri: item.gif_url || item.image_url }}
+                    style={{ width: "100%", height: "100%" }}
+                    contentFit="cover"
+                  />
+                )}
               </View>
               <Text style={styles.cardLabel}>{item.label}</Text>
               <Text style={styles.cardKind}>{item.kind === "letter" ? "•" : "★"}</Text>
@@ -154,11 +160,17 @@ export default function Dictionary() {
             {selected && (
               <ScrollView contentContainerStyle={{ padding: spacing.lg }}>
                 <View style={styles.detailImg}>
-                  <Image
-                    source={{ uri: selected.gif_url || selected.image_url }}
-                    style={{ width: "100%", height: "100%" }}
-                    contentFit="contain"
-                  />
+                  {selected.emoji ? (
+                    <View style={styles.emojiBox}>
+                      <Text style={styles.emojiDetail}>{selected.emoji}</Text>
+                    </View>
+                  ) : (
+                    <Image
+                      source={{ uri: selected.gif_url || selected.image_url }}
+                      style={{ width: "100%", height: "100%" }}
+                      contentFit="contain"
+                    />
+                  )}
                 </View>
                 <Text style={styles.detailLabel}>{selected.label}</Text>
                 <Text style={styles.detailKind}>{selected.kind === "letter" ? "Letra / Letter" : "Palabra / Word"} · {selected.language.toUpperCase()}</Text>
@@ -229,6 +241,9 @@ const styles = StyleSheet.create({
   modalClose: { alignSelf: "flex-end", width: 48, height: 48, alignItems: "center", justifyContent: "center", margin: spacing.sm },
   modalCloseText: { color: colors.onSurface, fontSize: 22 },
   detailImg: { width: "100%", aspectRatio: 1, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, overflow: "hidden", marginBottom: spacing.lg },
+  emojiBox: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.brandTertiary },
+  emojiCard: { fontSize: 64 },
+  emojiDetail: { fontSize: 140 },
   detailLabel: { color: colors.onSurface, fontSize: 32, fontWeight: "800" },
   detailKind: { color: colors.onSurfaceTertiary, fontSize: 12, marginTop: 4, textTransform: "uppercase", letterSpacing: 1 },
   detailBox: { marginTop: spacing.lg, backgroundColor: colors.surfaceSecondary, padding: spacing.lg, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },

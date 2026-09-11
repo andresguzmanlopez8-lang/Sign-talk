@@ -21,6 +21,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius } from "@/src/theme";
 import { useLang } from "@/src/lang";
 import { exportChatPdf } from "@/src/exportChat";
+import ContactPicker from "@/src/components/ContactPicker";
 
 type Favorite = { id: string; text: string; language: "es" | "en" };
 
@@ -55,6 +56,7 @@ export default function Translator() {
   const [favorites, setFavorites] = useState<Favorite[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [shareText, setShareText] = useState<string | null>(null);
   const scrollRef = useRef<FlatList<Msg>>(null);
 
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
@@ -299,6 +301,17 @@ export default function Translator() {
           >
             <Text style={styles.replayText}>{isFav(item.translated_text) ? "⭐" : "☆"}</Text>
           </Pressable>
+          <Pressable
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              setShareText(item.translated_text);
+            }}
+            style={styles.replayBtn}
+            testID={`share-${item.id}`}
+            accessibilityLabel={t.shareMessage}
+          >
+            <Text style={styles.replayText}>📤</Text>
+          </Pressable>
         </View>
       </View>
     );
@@ -509,6 +522,7 @@ export default function Translator() {
           )}
         </View>
       </View>
+      <ContactPicker visible={shareText !== null} text={shareText} onClose={() => setShareText(null)} />
     </KeyboardAvoidingView>
   );
 }

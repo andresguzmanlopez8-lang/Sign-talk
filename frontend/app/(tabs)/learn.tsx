@@ -7,7 +7,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius } from "@/src/theme";
 import { useLang } from "@/src/lang";
 
-type Entry = { id: string; label: string; kind: string; description: string; gif_url?: string | null; image_url?: string | null };
+type Entry = { id: string; label: string; kind: string; description: string; emoji?: string | null; gif_url?: string | null; image_url?: string | null };
 type Item = { entry: Entry; options: string[] };
 type Progress = {
   streak: number;
@@ -142,11 +142,17 @@ export default function Learn() {
       <Text style={styles.qCounter} testID="quiz-counter">{t.question} {idx + 1} / {items.length}</Text>
 
       <View style={styles.qImage}>
-        <Image
-          source={{ uri: current.entry.gif_url || current.entry.image_url || "" }}
-          style={{ width: "100%", height: "100%" }}
-          contentFit="contain"
-        />
+        {current.entry.emoji ? (
+          <View style={styles.emojiBox} testID="quiz-emoji">
+            <Text style={styles.emojiBig}>{current.entry.emoji}</Text>
+          </View>
+        ) : (
+          <Image
+            source={{ uri: current.entry.gif_url || current.entry.image_url || "" }}
+            style={{ width: "100%", height: "100%" }}
+            contentFit="contain"
+          />
+        )}
       </View>
       <Text style={styles.qTitle}>{t.whichSign}</Text>
       <Text style={styles.qDesc}>{current.entry.description}</Text>
@@ -264,6 +270,8 @@ const styles = StyleSheet.create({
   progressSegActive: { backgroundColor: colors.brandPrimary },
   qCounter: { color: colors.onSurfaceTertiary, fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 1 },
   qImage: { width: "100%", height: 200, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, overflow: "hidden" },
+  emojiBox: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.brandTertiary },
+  emojiBig: { fontSize: 110 },
   qTitle: { color: colors.onSurface, fontSize: 20, fontWeight: "800" },
   qDesc: { color: colors.onSurfaceSecondary, fontSize: 14, lineHeight: 20 },
   options: { gap: spacing.sm },
