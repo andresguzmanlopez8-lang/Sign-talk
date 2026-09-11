@@ -103,6 +103,13 @@ export const STRINGS = {
     contactsBlocked: "El acceso a contactos está bloqueado. Actívalo en Ajustes o escribe un número.",
     openSettings: "Abrir Ajustes",
     shareMessage: "Enviar mensaje",
+    reviewMode: "Modo Repaso",
+    reviewDesc: "Practica solo las señas que fallaste.",
+    reviewEmpty: "Sin señas pendientes. ¡Vas muy bien!",
+    weakSigns: "señas por repasar",
+    startReview: "Repasar",
+    mastered: "Señas dominadas",
+    stillWeak: "Aún por repasar",
   },
   en: {
     appName: "SignBridge",
@@ -187,6 +194,13 @@ export const STRINGS = {
     contactsBlocked: "Contacts access is blocked. Enable it in Settings or type a number.",
     openSettings: "Open Settings",
     shareMessage: "Send message",
+    reviewMode: "Review Mode",
+    reviewDesc: "Practice only the signs you got wrong.",
+    reviewEmpty: "No signs to review. You're doing great!",
+    weakSigns: "signs to review",
+    startReview: "Review",
+    mastered: "Signs mastered",
+    stillWeak: "Still to review",
   },
 };
 

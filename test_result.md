@@ -111,3 +111,7 @@
 - Contacts sharing: 📤 button (share-<msgId>) on bubbles → ContactPicker (testIDs: contact-picker, contacts-perm, request-contacts, open-settings, contact-search, contact-<id>, manual-phone, manual-continue, send-options, send-whatsapp, send-sms, change-contact, contact-picker-close). Web = manual number only (expo-contacts unsupported).
 - Word emoji illustrations: dictionary entries kind=word now include `emoji`; rendered in dictionary cards (emoji-<id>), detail modal, quiz (quiz-emoji). Dictionary now 129 entries (38 words/lang).
 - Seed changed to bulk upsert ($set by id) on startup.
+
+## Iteration 4 — main agent
+- Review mode: learn/complete now accepts wrong_ids → stored in weak_ids. GET /api/learn/review?language= (quiz from weak ids only), POST /api/learn/review/complete (correct → removed from weak, wrong → stays; streak untouched, counted=false, mastered=n).
+- Learn tab: review-card, weak-count badge, start-review (disabled when 0 weak), quiz-counter prefixed "Modo Repaso", result shows review-stats (mastered / still weak); daily result shows review-hint when there were wrong answers.

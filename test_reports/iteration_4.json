@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 4 tested only Modo Repaso (Review Mode) as requested. Backend: 12/12 pytest tests PASS in /app/backend/tests/test_review_mode.py — GET /learn/today?language=es returns exactly 5 items each with 4 options containing entry.label; POST /learn/complete with 2 correct + 3 wrong returns counted=true, streak=1, weak_count=3, weak_ids equal to the 3 wrong ids, lessons_completed=1; GET /learn/progress reflects weak_count=3; GET /learn/review?language=es returns items for exactly those 3 weak ids (each with 4 options); GET /learn/review?language=en returns items=[] (weak ids are Spanish only); POST /learn/review/complete with 2 correct + 1 wrong returns counted=false, mastered=2, weak_count=1, streak=1 (unchanged), lessons_completed=1 (unchanged); GET /learn/progress then shows weak_count=1 and learned_count includes mastered ids; all 5 learn endpoints (3 GET + 2 POST) return 401 without token. Frontend (mobile 390x844 web, fresh phone): Login flow (phone-input → send-otp-button → otp-0..5=123456 → name-input 'María López' → continue-btn → skip-btn) works. Aprender tab initial state: review-card renders with 'Sin señas pendientes', weak-count badge NOT present, start-review has aria-disabled=true. Ran start-lesson (5 questions) and picked first option each time — got 3 correct / 2 wrong. quiz-result shows review-hint '🎯 2 señas por repasar' and result-score '3 / 5'. quiz-finish → home: weak-count badge shows '2', streak-count='1', start-review enabled (aria-disabled removed). start-review → quiz-counter='🎯 Modo Repaso · Pregunta 1 / 2' (rendered uppercase via textTransform), 2 questions built from the exact 2 weak ids. Answered 0 correctly (worst case) — review-stats correctly shows '✅ Señas dominadas: 0 🎯 Aún por repasar: 2'. quiz-finish → home weak-count still '2' (no mastered), streak-count still '1' (review does NOT change streak — confirmed). No JS errors or red screens.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_review_mode.py",
+    "/app/test_reports/pytest/review_mode.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py _update_weak correctly removes correct_ids from weak set and adds wrong_ids — order matters (subtract before add), which is handled properly. Idempotent set-based logic.",
+    "learn/review uses random.Random() (no seed) — order changes per call, which is fine for review; items limited to 10.",
+    "learn/review/complete does NOT touch last_completed/streak/lessons_completed but DOES update learned_ids and total_correct — matches spec ('review does not change the daily streak' but mastered signs count as learned).",
+    "Frontend learn.tsx correctly gates start-review by weak_count===0 and shows weak-count badge only when >0. reviewHint uses wrongIds.length (client-side), which matches the server response weak delta for daily lesson.",
+    "review-stats uses result.weak_count (post-submit) for 'Aún por repasar' — server-authoritative. Correct."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_review_mode.py (created)"
+  ],
+  "success_rate": {
+    "backend": "100% (12/12 tests pass)",
+    "frontend": "100% of tested flows pass (initial empty state, daily lesson with wrong answers, review-hint, home badge & enablement, review quiz counter, review-stats, streak unchanged after review)"
+  },
+  "seed_data_creation": "Fresh phone per test run (timestamp-based) so weak_ids/streak start empty.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Modo Repaso is fully working end-to-end. Option testIDs are option-<label>; picking the correct label turns the option green (optionRight bg=success). quiz-counter has textTransform: uppercase (raw text 'Modo Repaso' but renders 'MODO REPASO'). review-card container test uses testID='review-card' — Playwright is_visible sometimes returns False for the ScrollView-embedded card even though children render; use inner testIDs (start-review, weak-count, or text 'Sin señas pendientes') to assert state instead of the card container itself. Streak is not incremented by review completion — verified.",
+  "rca_of_issue": "N/A — no issues found."
+}

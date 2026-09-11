@@ -87,6 +87,9 @@ export const api = {
   deleteFavorite: (id: string) => request<any>(`/favorites/${id}`, { method: "DELETE" }),
   learnToday: (language: "es" | "en") => request<any>(`/learn/today?language=${language}`),
   learnProgress: () => request<any>("/learn/progress"),
-  learnComplete: (payload: { language: "es" | "en"; correct_ids: string[]; score: number; total: number }) =>
+  learnComplete: (payload: { language: "es" | "en"; correct_ids: string[]; wrong_ids: string[]; score: number; total: number }) =>
     request<any>("/learn/complete", { method: "POST", body: payload }),
+  learnReview: (language: "es" | "en") => request<any>(`/learn/review?language=${language}`),
+  learnReviewComplete: (payload: { language: "es" | "en"; correct_ids: string[]; wrong_ids: string[]; score: number; total: number }) =>
+    request<any>("/learn/review/complete", { method: "POST", body: payload }),
 };

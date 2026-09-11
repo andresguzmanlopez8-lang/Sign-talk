@@ -545,6 +545,7 @@ LESSON_SIZE = 5
 class LearnCompleteReq(BaseModel):
     language: Literal["es", "en"] = "es"
     correct_ids: List[str] = []
+    wrong_ids: List[str] = []
     score: int = 0
     total: int = LESSON_SIZE
 
@@ -563,6 +564,7 @@ async def _get_progress(user_id: str) -> dict:
             "best_streak": 0,
             "last_completed": None,
             "learned_ids": [],
+            "weak_ids": [],
             "lessons_completed": 0,
             "total_correct": 0,
         }
@@ -577,9 +579,27 @@ def _progress_view(prog: dict) -> dict:
         "last_completed": last,
         "completed_today": last == _today(),
         "learned_count": len(prog.get("learned_ids", [])),
+        "weak_ids": prog.get("weak_ids", []),
+        "weak_count": len(prog.get("weak_ids", [])),
         "lessons_completed": prog.get("lessons_completed", 0),
         "total_correct": prog.get("total_correct", 0),
     }
+
+def _update_weak(prog: dict, correct_ids: List[str], wrong_ids: List[str]) -> None:
+    weak = set(prog.get("weak_ids", []))
+    weak -= set(correct_ids)
+    weak |= set(wrong_ids)
+    prog["weak_ids"] = sorted(weak)
+
+def _build_quiz_items(entries: List[dict], picked: List[dict], rng) -> List[dict]:
+    items = []
+    for e in picked:
+        same_kind = [x["label"] for x in entries if x["kind"] == e["kind"] and x["id"] != e["id"]]
+        distractors = rng.sample(same_kind, min(3, len(same_kind)))
+        options = distractors + [e["label"]]
+        rng.shuffle(options)
+        items.append({"entry": e, "options": options})
+    return items
 
 @api_router.get("/learn/progress")
 async def learn_progress(user=Depends(get_current_user)):
@@ -597,14 +617,35 @@ async def learn_today(language: Literal["es", "en"] = "es", user=Depends(get_cur
         candidates = entries  # everything learned: cycle through again
     rng = random.Random(f"{user['id']}|{_today()}|{language}")
     picked = rng.sample(candidates, min(LESSON_SIZE, len(candidates)))
-    items = []
-    for e in picked:
-        same_kind = [x["label"] for x in entries if x["kind"] == e["kind"] and x["id"] != e["id"]]
-        distractors = rng.sample(same_kind, min(3, len(same_kind)))
-        options = distractors + [e["label"]]
-        rng.shuffle(options)
-        items.append({"entry": e, "options": options})
+    items = _build_quiz_items(entries, picked, rng)
     return {"date": _today(), "language": language, "items": items, "progress": _progress_view(prog)}
+
+@api_router.get("/learn/review")
+async def learn_review(language: Literal["es", "en"] = "es", user=Depends(get_current_user)):
+    """Quiz built only from the signs the user previously got wrong."""
+    import random
+    prog = await _get_progress(user["id"])
+    weak = set(prog.get("weak_ids", []))
+    entries = await db.dictionary.find({"language": language}, {"_id": 0}).to_list(500)
+    picked = [e for e in entries if e["id"] in weak]
+    rng = random.Random()
+    rng.shuffle(picked)
+    picked = picked[:10]
+    items = _build_quiz_items(entries, picked, rng)
+    return {"language": language, "items": items, "progress": _progress_view(prog)}
+
+@api_router.post("/learn/review/complete")
+async def learn_review_complete(req: LearnCompleteReq, user=Depends(get_current_user)):
+    """Review results: mastered signs leave the weak list, missed ones stay. No streak change."""
+    prog = await _get_progress(user["id"])
+    _update_weak(prog, req.correct_ids, req.wrong_ids)
+    prog["total_correct"] = prog.get("total_correct", 0) + max(0, req.score)
+    prog["learned_ids"] = sorted(set(prog.get("learned_ids", [])) | set(req.correct_ids))
+    await db.learning.update_one({"user_id": user["id"]}, {"$set": prog}, upsert=True)
+    view = _progress_view(prog)
+    view["counted"] = False
+    view["mastered"] = len(req.correct_ids)
+    return view
 
 @api_router.post("/learn/complete")
 async def learn_complete(req: LearnCompleteReq, user=Depends(get_current_user)):
@@ -619,6 +660,7 @@ async def learn_complete(req: LearnCompleteReq, user=Depends(get_current_user)):
         prog["lessons_completed"] = prog.get("lessons_completed", 0) + 1
     prog["total_correct"] = prog.get("total_correct", 0) + max(0, req.score)
     prog["learned_ids"] = sorted(set(prog.get("learned_ids", [])) | set(req.correct_ids))
+    _update_weak(prog, req.correct_ids, req.wrong_ids)
     await db.learning.update_one({"user_id": user["id"]}, {"$set": prog}, upsert=True)
     view = _progress_view(prog)
     view["counted"] = counted

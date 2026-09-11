@@ -22,6 +22,7 @@ Mobile app for bidirectional translation between Sign Language (LSM/ASL) and Spo
 9. **Historial Exportable**: 📄 in translator header builds a printable PDF of the whole chat (expo-print). Native: share sheet via expo-sharing. Web: print dialog.
 10. **Enviar a Contactos**: 📤 on any bubble opens ContactPicker bottom sheet (src/components/ContactPicker.tsx): contacts permission flow (check → explain → request → blocked → Open Settings), searchable contact list (expo-contacts), manual number fallback (web/denied). Send via WhatsApp (wa.me link) or SMS (sms: link). PDF → share sheet (WhatsApp appears there).
 11. **Ilustraciones por palabra**: every word entry has an `emoji` field rendered as a large illustration in dictionary cards, detail modal and quiz (letters keep GIFs). Seed upserts all entries with `$set` on startup.
+12. **Modo Repaso**: wrong answers (daily or review) are stored in `learning.weak_ids`; correct answers remove them. Learn tab shows a Review card with weak count; `GET /learn/review` builds a quiz (≤10) only from weak signs; `POST /learn/review/complete` updates weak list without touching the streak.
 
 ## Backend Endpoints (/api)
 - `POST /auth/send-otp`, `POST /auth/verify-otp`, `GET /auth/me`, `POST /auth/onboard`, `PATCH /auth/profile`
@@ -30,7 +31,8 @@ Mobile app for bidirectional translation between Sign Language (LSM/ASL) and Spo
 - `GET /messages`, `DELETE /messages`
 - `POST /tts` (returns URL), `GET /tts/{key}.mp3`
 - `GET /favorites?language=`, `POST /favorites {text, language}` (dedup), `DELETE /favorites/{id}`
-- `GET /learn/today?language=` → {items:[{entry, options[4]}], progress}, `POST /learn/complete {language, correct_ids, score, total}` → progress + counted, `GET /learn/progress`
+- `GET /learn/today?language=` → {items:[{entry, options[4]}], progress}, `POST /learn/complete {language, correct_ids, wrong_ids, score, total}` → progress + counted, `GET /learn/progress`
+- `GET /learn/review?language=` → {items (only weak_ids, ≤10), progress}, `POST /learn/review/complete {language, correct_ids, wrong_ids, score, total}` → progress + mastered (no streak change)
 
 ## Backlog
 - Contacts integration to share translated messages (P1)

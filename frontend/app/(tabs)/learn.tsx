@@ -15,28 +15,34 @@ type Progress = {
   completed_today: boolean;
   learned_count: number;
   lessons_completed: number;
+  weak_count: number;
 };
 
 type Phase = "home" | "quiz" | "result";
+type QuizKind = "daily" | "review";
 
 export default function Learn() {
   const insets = useSafeAreaInsets();
   const { t, lang } = useLang();
   const [items, setItems] = useState<Item[]>([]);
+  const [dailyItems, setDailyItems] = useState<Item[]>([]);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [loading, setLoading] = useState(true);
   const [phase, setPhase] = useState<Phase>("home");
+  const [quizKind, setQuizKind] = useState<QuizKind>("daily");
   const [idx, setIdx] = useState(0);
   const [picked, setPicked] = useState<string | null>(null);
   const [correctIds, setCorrectIds] = useState<string[]>([]);
+  const [wrongIds, setWrongIds] = useState<string[]>([]);
   const [result, setResult] = useState<any | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [loadingReview, setLoadingReview] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const res = await api.learnToday(lang);
-      setItems(res.items);
+      setDailyItems(res.items);
       setProgress(res.progress);
     } catch (e) {
       console.warn(e);
@@ -50,13 +56,30 @@ export default function Learn() {
     load();
   }, [load]);
 
-  const startQuiz = () => {
+  const beginQuiz = (kind: QuizKind, quizItems: Item[]) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setQuizKind(kind);
+    setItems(quizItems);
     setIdx(0);
     setPicked(null);
     setCorrectIds([]);
+    setWrongIds([]);
     setResult(null);
     setPhase("quiz");
+  };
+
+  const startQuiz = () => beginQuiz("daily", dailyItems);
+
+  const startReview = async () => {
+    setLoadingReview(true);
+    try {
+      const res = await api.learnReview(lang);
+      if (res.items.length > 0) beginQuiz("review", res.items);
+    } catch (e) {
+      console.warn(e);
+    } finally {
+      setLoadingReview(false);
+    }
   };
 
   const current = items[idx];
@@ -70,6 +93,7 @@ export default function Learn() {
       setCorrectIds((prev) => [...prev, current.entry.id]);
     } else {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      setWrongIds((prev) => [...prev, current.entry.id]);
     }
   };
 
@@ -81,7 +105,8 @@ export default function Learn() {
     }
     setSubmitting(true);
     try {
-      const res = await api.learnComplete({ language: lang, correct_ids: correctIds, score: correctIds.length, total: items.length });
+      const payload = { language: lang, correct_ids: correctIds, wrong_ids: wrongIds, score: correctIds.length, total: items.length };
+      const res = quizKind === "review" ? await api.learnReviewComplete(payload) : await api.learnComplete(payload);
       setResult(res);
       setProgress(res);
       setPhase("result");
@@ -114,19 +139,45 @@ export default function Learn() {
         <Text style={styles.lessonDesc}>{progress?.completed_today ? t.lessonDone : t.lessonDesc}</Text>
         {progress?.completed_today && <Text style={styles.lessonHint}>{t.comeBackTomorrow}</Text>}
         <View style={styles.previewRow}>
-          {items.map((it) => (
+          {dailyItems.map((it) => (
             <View key={it.entry.id} style={styles.previewChip}>
               <Text style={styles.previewText}>{it.entry.label}</Text>
             </View>
           ))}
         </View>
         <Pressable
-          style={[styles.primaryBtn, items.length === 0 && styles.btnDisabled]}
+          style={[styles.primaryBtn, dailyItems.length === 0 && styles.btnDisabled]}
           onPress={startQuiz}
-          disabled={items.length === 0}
+          disabled={dailyItems.length === 0}
           testID="start-lesson"
         >
           <Text style={styles.primaryBtnText}>{progress?.completed_today ? t.practiceAgain : t.startLesson}</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.lessonCard} testID="review-card">
+        <View style={styles.reviewHeader}>
+          <Text style={styles.lessonTitle}>🎯 {t.reviewMode}</Text>
+          {(progress?.weak_count ?? 0) > 0 && (
+            <View style={styles.weakBadge} testID="weak-count">
+              <Text style={styles.weakBadgeText}>{progress?.weak_count}</Text>
+            </View>
+          )}
+        </View>
+        <Text style={styles.lessonDesc}>
+          {(progress?.weak_count ?? 0) > 0 ? `${t.reviewDesc} ${progress?.weak_count} ${t.weakSigns}.` : t.reviewEmpty}
+        </Text>
+        <Pressable
+          style={[styles.secondaryBtn, (progress?.weak_count ?? 0) === 0 && styles.btnDisabled]}
+          onPress={startReview}
+          disabled={(progress?.weak_count ?? 0) === 0 || loadingReview}
+          testID="start-review"
+        >
+          {loadingReview ? (
+            <ActivityIndicator color={colors.brandPrimary} />
+          ) : (
+            <Text style={styles.secondaryBtnText}>{t.startReview}</Text>
+          )}
         </Pressable>
       </View>
     </ScrollView>
@@ -139,7 +190,9 @@ export default function Learn() {
           <View key={i} style={[styles.progressSeg, i <= idx && styles.progressSegActive]} />
         ))}
       </View>
-      <Text style={styles.qCounter} testID="quiz-counter">{t.question} {idx + 1} / {items.length}</Text>
+      <Text style={styles.qCounter} testID="quiz-counter">
+        {quizKind === "review" ? `🎯 ${t.reviewMode} · ` : ""}{t.question} {idx + 1} / {items.length}
+      </Text>
 
       <View style={styles.qImage}>
         {current.entry.emoji ? (
@@ -203,6 +256,15 @@ export default function Learn() {
           <Text style={styles.streakBadgeText}>🔥 {t.streakUp} {result.streak} {t.days}</Text>
         </View>
       )}
+      {quizKind === "review" && (
+        <View style={styles.reviewStats} testID="review-stats">
+          <Text style={styles.reviewStat}>✅ {t.mastered}: {correctIds.length}</Text>
+          <Text style={styles.reviewStat}>🎯 {t.stillWeak}: {result?.weak_count ?? wrongIds.length}</Text>
+        </View>
+      )}
+      {quizKind === "daily" && wrongIds.length > 0 && (
+        <Text style={styles.reviewHint} testID="review-hint">🎯 {wrongIds.length} {t.weakSigns}</Text>
+      )}
       <Pressable style={styles.primaryBtn} onPress={() => { setPhase("home"); load(); }} testID="quiz-finish">
         <Text style={styles.primaryBtnText}>{t.finish}</Text>
       </Pressable>
@@ -264,6 +326,14 @@ const styles = StyleSheet.create({
   primaryBtn: { backgroundColor: colors.brandPrimary, paddingVertical: spacing.md, borderRadius: radius.pill, alignItems: "center", minHeight: 48, justifyContent: "center" },
   primaryBtnText: { color: colors.onBrandPrimary, fontWeight: "800", fontSize: 15 },
   btnDisabled: { opacity: 0.5 },
+  secondaryBtn: { borderWidth: 1, borderColor: colors.brandPrimary, paddingVertical: spacing.md, borderRadius: radius.pill, alignItems: "center", minHeight: 48, justifyContent: "center" },
+  secondaryBtnText: { color: colors.brandPrimary, fontWeight: "800", fontSize: 15 },
+  reviewHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  weakBadge: { backgroundColor: colors.warning, minWidth: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.sm },
+  weakBadgeText: { color: colors.onWarning, fontWeight: "800", fontSize: 13 },
+  reviewStats: { gap: spacing.xs, alignItems: "center" },
+  reviewStat: { color: colors.onSurfaceSecondary, fontWeight: "700", fontSize: 14 },
+  reviewHint: { color: colors.warning, fontWeight: "700", fontSize: 13 },
   quizContent: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing.xxl },
   progressBar: { flexDirection: "row", gap: 4 },
   progressSeg: { flex: 1, height: 6, borderRadius: 3, backgroundColor: colors.surfaceTertiary },
