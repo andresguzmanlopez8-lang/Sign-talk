@@ -1,0 +1,35 @@
+{
+  "summary": "Tested 3 new SignBridge features: Frases Favoritas, Modo Aprendizaje, and Historial Exportable. Backend: 14/14 pytest tests PASS (favorites CRUD + dedupe + auth-gating; learn/today returns 5 items with correct shape, deterministic per user+day, works ES & EN; learn/complete counts first-time, idempotent same-day, GET /learn/progress reflects state). Frontend (mobile 390x844 web): Login via phone + OTP 123456 + onboarding + skip permissions works. 4-tab bottom nav confirmed (Traductor, Diccionario, Aprender, Perfil). Aprender flow verified end-to-end: streak-card, stat-best/learned/lessons, start-lesson, 5 questions with 4 options each, quiz-feedback + quiz-next, quiz-result with result-score, streak badge ('🔥 ¡Racha aumentada! 1 días'), quiz-finish returns home showing streak=1, best=1, learned=1, lessons=1 + '¡Lección de hoy completada!' + 'Practicar de nuevo' button. Translator: mode-voice + text-input + send-btn produces bubble with fav star button; tapping fav-<id> saves favorite (star flips to ⭐, chip appears in favorites-row with correct text 'Hola amigo'); tapping chip adds a new msg bubble to chat. export-pdf button is CORRECTLY HIDDEN when chat empty and shown when messages exist. No React Native red-screen or JS crashes. No deprecated packages detected (expo-audio in use, not deprecated expo-av). All flows healthy.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_new_features.py",
+    "/app/test_reports/pytest/new_features.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "translator.tsx is 651 lines — nearing the 700-line threshold; consider extracting the FavoritesRow, ChatBubble, and export/audio helpers into separate components/hooks for maintainability.",
+    "learn/today randomness uses Python's stdlib random.Random seeded with user_id|date|language. Deterministic and correct, but note it will return the same 5 items forever once learned_ids covers all entries (cycles). Acceptable for MVP.",
+    "buildChatHtml escapes text with esc(); good. No SSRF/inline-JS risk detected in exportChat.ts."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_new_features.py (created)"
+  ],
+  "success_rate": {
+    "backend": "100% (14/14 new-feature tests pass)",
+    "frontend": "100% of tested flows (login, onboarding, Aprender full quiz, favorites save/tap-to-resend, export-pdf visibility) pass"
+  },
+  "seed_data_creation": "Each backend test creates a fresh user via unique phone number based on timestamp so learning progress starts at zero. Favorites use TEST_ prefix. No production data modified.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 2 fully verified the 3 new features (favorites, learning mode, export PDF button). Backend test file at /app/backend/tests/test_new_features.py can be reused. Two aspects were not physically re-verified in browser due to a Metro WS reconnect mid-session near the end: (a) long-press-to-delete on fav-chip (~600ms), and (b) actually clicking export-pdf triggers window.print (Playwright typically blocks the print dialog in headless). Both are low risk: source code shows onLongPress={() => removeFavorite(f)} with delayLongPress={450} and exportChatPdf calls Print.printAsync({html}) on web. If retested, use a fresh phone number per run; existing +525550001111 has already completed today's lesson.",
+  "rca_of_issue": "N/A — no issues found."
+}

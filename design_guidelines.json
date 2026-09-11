@@ -1,0 +1,193 @@
+{
+  "app_name": "SignBridge",
+  "personality": "7 Dark-First Utility",
+  "personality_one_liner": "A high-contrast, performance-oriented command center designed for real-time bidirectional translation with absolute clarity and zero visual friction.",
+  "color": {
+    "surface": "#0D0E12",
+    "onSurface": "#FFFFFF",
+    "surfaceSecondary": "#1A1D24",
+    "onSurfaceSecondary": "#E2E8F0",
+    "surfaceTertiary": "#252932",
+    "onSurfaceTertiary": "#94A3B8",
+    "surfaceInverse": "#FFFFFF",
+    "onSurfaceInverse": "#0D0E12",
+    "brand": "#FF5722",
+    "brandPrimary": "#FF5722",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#E64A19",
+    "onBrandSecondary": "#FFFFFF",
+    "brandTertiary": "#422014",
+    "onBrandTertiary": "#FF5722",
+    "success": "#10B981",
+    "onSuccess": "#000000",
+    "warning": "#F59E0B",
+    "onWarning": "#000000",
+    "error": "#EF4444",
+    "onError": "#FFFFFF",
+    "info": "#3B82F6",
+    "onInfo": "#FFFFFF",
+    "border": "#2A2F3A",
+    "borderStrong": "#4A5266",
+    "divider": "#1F232D",
+    "muted": "#64748B"
+  },
+  "typography": {
+    "displayFontFamily": "Barlow",
+    "textFontFamily": "Satoshi",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Use tight vertical rhythm for chat/live features to maximize screen real estate, and generous padding (lg/xl) around touch targets for accessibility.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": "0",
+  "navigation": "bottom_tabs",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": false,
+    "do's": [
+      "Use solid surfaceSecondary and surfaceTertiary for elevation instead of glass to ensure maximum WCAG contrast for visually impaired users."
+    ],
+    "dont's": [
+      "Do not use blur or glassmorphism. This app requires stark contrast and rapid rendering for live camera feeds."
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "AuthOTP",
+      "purpose": "WhatsApp-style phone login with country code picker and OTP verification.",
+      "states": {
+        "loading": "Centered spinner during OTP verification",
+        "empty": "N/A",
+        "error": "Inline red text below input with retry prompt"
+      },
+      "layout": "Minimalist single-column structure. Large display heading, clear instructional text. A prominent input field for the phone number with country code selector. Persistent sticky primary CTA at the bottom using KeyboardAvoidingView."
+    },
+    {
+      "name": "Onboarding",
+      "purpose": "Collect user profile details and default language preference (LSM/ASL).",
+      "states": {
+        "loading": "Subtle skeleton on avatar upload",
+        "empty": "N/A",
+        "error": "Toast alert if saving fails"
+      },
+      "layout": "Step-by-step full-width screens. Large segmented controls or toggle cards for language selection (ES/EN). Circular avatar upload area at center. Sticky 'Continue' button."
+    },
+    {
+      "name": "Permissions",
+      "purpose": "Request Camera, Mic, and Contacts access before core app usage.",
+      "states": {
+        "loading": "N/A",
+        "empty": "N/A",
+        "error": "Fallback message explaining how to enable in OS settings if denied."
+      },
+      "layout": "Large icon (Phosphor) centered, bold heading, concise explanation body text. Large primary button 'Grant Access' and secondary muted button 'Skip for now' pinned at the bottom."
+    },
+    {
+      "name": "TranslateChat",
+      "purpose": "Bidirectional real-time translation command center (Camera/Avatar vs Text/Audio).",
+      "states": {
+        "loading": "Live skeleton processing indicator for ML model loading",
+        "empty": "Illustration of hands with 'Start signing or speaking' prompt",
+        "error": "Red banner at top 'Camera error' or 'Connection lost'"
+      },
+      "layout": "Split-screen / stacked operational layout. Top 40-50%: Camera viewport (for signing) or 3D Avatar viewport (for translated signs), utilizing edge-to-edge space. Bottom 50%: Chat-style transcript interface with distinct user/receiver bubbles. Fixed bottom input bar with oversized record button (mic/video toggle) and text input."
+    },
+    {
+      "name": "Dictionary",
+      "purpose": "Searchable A-Z directory of sign language vocabulary with visual references.",
+      "states": {
+        "loading": "Grid of skeleton cards",
+        "empty": "Illustration indicating 'No signs found' for search query",
+        "error": "Retry fetching dictionary data"
+      },
+      "layout": "Sticky search bar at the top with a horizontal filter row (A-Z tabs). Below, a 2-column grid of vocabulary cards. Each card contains a thumbnail image/GIF, bold word label, and language tag. Generous touch targets."
+    },
+    {
+      "name": "DictionaryDetail",
+      "purpose": "Detailed view of a single sign with video/GIF playback and textual explanation.",
+      "states": {
+        "loading": "Video skeleton placeholder",
+        "empty": "N/A",
+        "error": "Failed to load video"
+      },
+      "layout": "Hero video/GIF player spanning full width at top. Below, a scrollable content area with the word, phonetic guide, and step-by-step textual explanation of hand positioning and movement."
+    },
+    {
+      "name": "Profile",
+      "purpose": "Manage account, settings, language preference, and accessibility options.",
+      "states": {
+        "loading": "Skeleton rows for settings",
+        "empty": "N/A",
+        "error": "Error fetching profile"
+      },
+      "layout": "Standard list view with a hero banner at the top (Avatar + Name). Grouped settings rows using surfaceSecondary with leading icons and trailing chevrons. Includes a distinct 'Accessibility' section for high contrast and text size toggles."
+    }
+  ],
+  "images": {
+    "sign_hands_hero": {
+      "url": "https://images.unsplash.com/photo-1585577028863-35a3349c60db?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxOTF8MHwxfHNlYXJjaHwxfHxzaWduJTIwbGFuZ3VhZ2UlMjBoYW5kc3xlbnwwfHx8fDE3ODkxNjA1MjN8MA&ixlib=rb-4.1.0&q=85",
+      "dark": "https://images.unsplash.com/photo-1585059643411-da09ea0c68db?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxOTF8MHwxfHNlYXJjaHwyfHxzaWduJTIwbGFuZ3VhZ2UlMjBoYW5kc3xlbnwwfHx8fDE3ODkxNjA1MjN8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Grayscale photo of human hands making sign language gestures"
+    },
+    "avatar_placeholder": {
+      "url": "https://images.unsplash.com/photo-1644611148697-3eb43ac6c390?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMjd8MHwxfHNlYXJjaHwxfHxkZWFmJTIwY29tbXVuaXR5JTIwcHJvZmlsZXxlbnwwfHx8fDE3ODkxNjA1MjN8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Smiling deaf community member waving"
+    },
+    "animated_avatar": {
+      "url": "https://images.unsplash.com/photo-1740252117044-2af197eea287?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDN8MHwxfHNlYXJjaHwxfHwzZCUyMGFuaW1hdGVkJTIwYXZhdGFyJTIwc3BlYWtpbmd8ZW58MHx8fHwxNzg5MTYwNTIzfDA&ixlib=rb-4.1.0&q=85",
+      "alt": "3D animated avatar representation"
+    },
+    "dictionary_empty": {
+      "url": "https://images.unsplash.com/photo-1667644836407-8aa34379010c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1ODB8MHwxfHNlYXJjaHwxfHxkaWN0aW9uYXJ5JTIwYm9vayUyMHN0dWR5fGVufDB8fHx8MTc4OTE2MDUyOHww&ixlib=rb-4.1.0&q=85",
+      "alt": "Open dictionary book pages"
+    },
+    "lsm_flag": {
+      "url": "https://images.unsplash.com/photo-1609779858641-af32f73effa6?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2ODh8MHwxfHNlYXJjaHwyfHxtZXhpY28lMjBmbGFnfGVufDB8fHx8MTc4OTE2MDUyOHww&ixlib=rb-4.1.0&q=85",
+      "alt": "Mexican Flag for LSM"
+    },
+    "asl_flag": {
+      "url": "https://images.unsplash.com/photo-1626836014893-37663794dca7?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxOTJ8MHwxfHNlYXJjaHwyfHx1bml0ZWQlMjBzdGF0ZXMlMjBmbGFnfGVufDB8fHx8MTc4OTE2MDUyOHww&ixlib=rb-4.1.0&q=85",
+      "alt": "United States Flag for ASL"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Strictly follow the Dark-First Utility (Personality 7) aesthetic: absolute clarity, high contrast, zero decorative visual friction, and command-center styling suitable for a real-time accessibility translation tool.",
+    "Implement the TranslateChat screen with a split view: ensure the camera feed (top) maintains clear framing guidance, while the bottom half uses WhatsApp-style chat bubbles for the transcript.",
+    "Disable glassmorphism completely. Accessibility requires high-contrast solid backgrounds (surfaceSecondary/surfaceTertiary) instead of translucent blurs.",
+    "Include a linear gradient overlay (gradient-to-dark scrim) at the bottom of the TranslateChat camera view and Dictionary video view to guarantee text legibility over the active video feed.",
+    "Ensure touch targets are at least 48x48pt for accessibility.",
+    "Wire subtle haptics to the core actions: mic/camera record toggles, sending a message, and switching dictionary filters.",
+    "Use standard Pressable components with clear visual state changes (opacity shift or background color change) instead of relying solely on haptic feedback."
+  ]
+}
