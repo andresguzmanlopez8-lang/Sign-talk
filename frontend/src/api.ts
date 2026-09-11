@@ -92,4 +92,6 @@ export const api = {
   learnReview: (language: "es" | "en") => request<any>(`/learn/review?language=${language}`),
   learnReviewComplete: (payload: { language: "es" | "en"; correct_ids: string[]; wrong_ids: string[]; score: number; total: number }) =>
     request<any>("/learn/review/complete", { method: "POST", body: payload }),
+  achievements: (language: "es" | "en") => request<any>(`/learn/achievements?language=${language}`),
+  phrases: (language: "es" | "en") => request<any>(`/phrases?language=${language}`, { auth: false }),
 };

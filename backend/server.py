@@ -583,6 +583,7 @@ def _progress_view(prog: dict) -> dict:
         "weak_count": len(prog.get("weak_ids", [])),
         "lessons_completed": prog.get("lessons_completed", 0),
         "total_correct": prog.get("total_correct", 0),
+        "achievements_count": len(prog.get("achievements", {})),
     }
 
 def _update_weak(prog: dict, correct_ids: List[str], wrong_ids: List[str]) -> None:
@@ -638,13 +639,18 @@ async def learn_review(language: Literal["es", "en"] = "es", user=Depends(get_cu
 async def learn_review_complete(req: LearnCompleteReq, user=Depends(get_current_user)):
     """Review results: mastered signs leave the weak list, missed ones stay. No streak change."""
     prog = await _get_progress(user["id"])
+    had_weak = len(prog.get("weak_ids", [])) > 0
     _update_weak(prog, req.correct_ids, req.wrong_ids)
     prog["total_correct"] = prog.get("total_correct", 0) + max(0, req.score)
     prog["learned_ids"] = sorted(set(prog.get("learned_ids", [])) | set(req.correct_ids))
+    if had_weak and len(prog["weak_ids"]) == 0:
+        prog["weak_cleared"] = True
+    newly = await _check_achievements(user["id"], prog)
     await db.learning.update_one({"user_id": user["id"]}, {"$set": prog}, upsert=True)
     view = _progress_view(prog)
     view["counted"] = False
     view["mastered"] = len(req.correct_ids)
+    view["newly_unlocked"] = _achievement_views(newly, prog, req.language)
     return view
 
 @api_router.post("/learn/complete")
@@ -658,13 +664,123 @@ async def learn_complete(req: LearnCompleteReq, user=Depends(get_current_user)):
         prog["best_streak"] = max(prog.get("best_streak", 0), prog["streak"])
         prog["last_completed"] = today
         prog["lessons_completed"] = prog.get("lessons_completed", 0) + 1
+    if req.total > 0 and req.score >= req.total:
+        prog["perfect_lessons"] = prog.get("perfect_lessons", 0) + 1
     prog["total_correct"] = prog.get("total_correct", 0) + max(0, req.score)
     prog["learned_ids"] = sorted(set(prog.get("learned_ids", [])) | set(req.correct_ids))
     _update_weak(prog, req.correct_ids, req.wrong_ids)
+    newly = await _check_achievements(user["id"], prog)
     await db.learning.update_one({"user_id": user["id"]}, {"$set": prog}, upsert=True)
     view = _progress_view(prog)
     view["counted"] = counted
+    view["newly_unlocked"] = _achievement_views(newly, prog, req.language)
     return view
+
+# ------------------- ACHIEVEMENTS -------------------
+
+ACHIEVEMENTS = [
+    {"id": "first_lesson", "emoji": "🎓", "es": ("Primera lección", "Completa tu primera lección diaria"), "en": ("First lesson", "Complete your first daily lesson"),
+     "check": lambda p, c: p.get("lessons_completed", 0) >= 1},
+    {"id": "streak_3", "emoji": "🔥", "es": ("3 días seguidos", "Mantén una racha de 3 días"), "en": ("3-day streak", "Keep a 3-day streak"),
+     "check": lambda p, c: p.get("best_streak", 0) >= 3},
+    {"id": "streak_7", "emoji": "🏅", "es": ("Semana perfecta", "Mantén una racha de 7 días"), "en": ("Perfect week", "Keep a 7-day streak"),
+     "check": lambda p, c: p.get("best_streak", 0) >= 7},
+    {"id": "streak_30", "emoji": "👑", "es": ("Mes constante", "Mantén una racha de 30 días"), "en": ("Steady month", "Keep a 30-day streak"),
+     "check": lambda p, c: p.get("best_streak", 0) >= 30},
+    {"id": "learned_10", "emoji": "🌱", "es": ("Primeras 10 señas", "Domina 10 señas"), "en": ("First 10 signs", "Master 10 signs"),
+     "check": lambda p, c: len(p.get("learned_ids", [])) >= 10},
+    {"id": "learned_50", "emoji": "🌳", "es": ("50 señas dominadas", "Domina 50 señas"), "en": ("50 signs mastered", "Master 50 signs"),
+     "check": lambda p, c: len(p.get("learned_ids", [])) >= 50},
+    {"id": "learned_100", "emoji": "🏆", "es": ("Centenario", "Domina 100 señas"), "en": ("Centurion", "Master 100 signs"),
+     "check": lambda p, c: len(p.get("learned_ids", [])) >= 100},
+    {"id": "lessons_10", "emoji": "📚", "es": ("Estudiante", "Completa 10 lecciones"), "en": ("Student", "Complete 10 lessons"),
+     "check": lambda p, c: p.get("lessons_completed", 0) >= 10},
+    {"id": "perfect_lesson", "emoji": "💯", "es": ("Lección perfecta", "Responde toda una lección sin errores"), "en": ("Perfect lesson", "Answer a whole lesson with no mistakes"),
+     "check": lambda p, c: p.get("perfect_lessons", 0) >= 1},
+    {"id": "review_clear", "emoji": "🎯", "es": ("Sin pendientes", "Vacía tu lista de repaso"), "en": ("All clear", "Empty your review list"),
+     "check": lambda p, c: p.get("weak_cleared", False)},
+    {"id": "fav_5", "emoji": "⭐", "es": ("Coleccionista", "Guarda 5 frases favoritas"), "en": ("Collector", "Save 5 favorite phrases"),
+     "check": lambda p, c: c["favorites"] >= 5},
+    {"id": "messages_10", "emoji": "💬", "es": ("Conversador", "Traduce 10 mensajes"), "en": ("Conversationalist", "Translate 10 messages"),
+     "check": lambda p, c: c["messages"] >= 10},
+]
+
+async def _check_achievements(user_id: str, prog: dict) -> List[str]:
+    """Evaluate all achievements; persist newly unlocked ids into prog. Returns newly unlocked ids."""
+    counts = {
+        "favorites": await db.favorites.count_documents({"user_id": user_id}),
+        "messages": await db.messages.count_documents({"user_id": user_id}),
+    }
+    unlocked = prog.setdefault("achievements", {})
+    newly = []
+    for a in ACHIEVEMENTS:
+        if a["id"] not in unlocked and a["check"](prog, counts):
+            unlocked[a["id"]] = datetime.now(timezone.utc).isoformat()
+            newly.append(a["id"])
+    return newly
+
+def _achievement_views(ids: List[str], prog: dict, language: str) -> List[dict]:
+    unlocked = prog.get("achievements", {})
+    out = []
+    for a in ACHIEVEMENTS:
+        if a["id"] in ids:
+            title, desc = a[language]
+            out.append({"id": a["id"], "emoji": a["emoji"], "title": title, "description": desc,
+                        "unlocked": a["id"] in unlocked, "unlocked_at": unlocked.get(a["id"])})
+    return out
+
+@api_router.get("/learn/achievements")
+async def learn_achievements(language: Literal["es", "en"] = "es", user=Depends(get_current_user)):
+    prog = await _get_progress(user["id"])
+    newly = await _check_achievements(user["id"], prog)
+    if newly:
+        await db.learning.update_one({"user_id": user["id"]}, {"$set": prog}, upsert=True)
+    items = _achievement_views([a["id"] for a in ACHIEVEMENTS], prog, language)
+    return {"items": items, "unlocked_count": sum(1 for i in items if i["unlocked"]), "total": len(items)}
+
+# ------------------- PHRASES -------------------
+
+PHRASES = [
+    # (category, es, en)
+    ("greetings", "Hola, ¿cómo estás?", "Hello, how are you?"),
+    ("greetings", "Mucho gusto en conocerte.", "Nice to meet you."),
+    ("greetings", "Hasta luego, cuídate.", "See you later, take care."),
+    ("greetings", "Buenos días, que tengas buen día.", "Good morning, have a nice day."),
+    ("needs", "¿Dónde está el baño?", "Where is the bathroom?"),
+    ("needs", "Necesito ayuda, por favor.", "I need help, please."),
+    ("needs", "Tengo hambre, ¿dónde puedo comer?", "I'm hungry, where can I eat?"),
+    ("needs", "¿Me puedes dar agua?", "Can you give me some water?"),
+    ("needs", "Necesito un doctor.", "I need a doctor."),
+    ("needs", "¿Cuánto cuesta esto?", "How much does this cost?"),
+    ("communication", "Soy sordo, ¿puedes escribirlo?", "I am deaf, can you write it down?"),
+    ("communication", "No entiendo, ¿puedes repetir?", "I don't understand, can you repeat?"),
+    ("communication", "Estoy aprendiendo lengua de señas.", "I am learning sign language."),
+    ("communication", "¿Puedes hablar más despacio?", "Can you speak more slowly?"),
+    ("communication", "Un momento, por favor.", "One moment, please."),
+    ("daily", "¿A qué hora nos vemos?", "What time shall we meet?"),
+    ("daily", "Llego en diez minutos.", "I'll be there in ten minutes."),
+    ("daily", "Gracias por tu paciencia.", "Thank you for your patience."),
+    ("daily", "¿Cómo llego a la estación?", "How do I get to the station?"),
+    ("daily", "Te quiero mucho.", "I love you very much."),
+]
+
+CATEGORY_LABELS = {
+    "greetings": {"es": "Saludos", "en": "Greetings", "emoji": "👋"},
+    "needs": {"es": "Necesidades", "en": "Needs", "emoji": "🆘"},
+    "communication": {"es": "Comunicación", "en": "Communication", "emoji": "💬"},
+    "daily": {"es": "Día a día", "en": "Everyday", "emoji": "📅"},
+}
+
+@api_router.get("/phrases")
+async def get_phrases(language: Literal["es", "en"] = "es"):
+    items = [
+        {"id": f"phrase-{i}", "category": cat, "text": es if language == "es" else en,
+         "category_label": CATEGORY_LABELS[cat][language], "category_emoji": CATEGORY_LABELS[cat]["emoji"]}
+        for i, (cat, es, en) in enumerate(PHRASES)
+    ]
+    return {"items": items, "categories": [
+        {"id": k, "label": v[language], "emoji": v["emoji"]} for k, v in CATEGORY_LABELS.items()
+    ]}
 
 # ------------------- TTS -------------------
 

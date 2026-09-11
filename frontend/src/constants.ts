@@ -110,6 +110,13 @@ export const STRINGS = {
     startReview: "Repasar",
     mastered: "Señas dominadas",
     stillWeak: "Aún por repasar",
+    phrases: "Frases",
+    phrasesTitle: "Frases completas",
+    searchPhrases: "Buscar frase...",
+    achievements: "Logros y medallas",
+    newBadge: "¡Nueva medalla!",
+    locked: "Bloqueado",
+    unlockedOn: "Desbloqueado",
   },
   en: {
     appName: "SignBridge",
@@ -201,6 +208,13 @@ export const STRINGS = {
     startReview: "Review",
     mastered: "Signs mastered",
     stillWeak: "Still to review",
+    phrases: "Phrases",
+    phrasesTitle: "Full phrases",
+    searchPhrases: "Search phrase...",
+    achievements: "Achievements & badges",
+    newBadge: "New badge!",
+    locked: "Locked",
+    unlockedOn: "Unlocked",
   },
 };
 

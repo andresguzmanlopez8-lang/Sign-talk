@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { View, Text, StyleSheet, Pressable, ActivityIndicator, ScrollView, RefreshControl } from "react-native";
+import { View, Text, StyleSheet, Pressable, ActivityIndicator, ScrollView, RefreshControl, Modal } from "react-native";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
@@ -17,6 +17,7 @@ type Progress = {
   lessons_completed: number;
   weak_count: number;
 };
+type Achievement = { id: string; emoji: string; title: string; description: string; unlocked: boolean; unlocked_at?: string | null };
 
 type Phase = "home" | "quiz" | "result";
 type QuizKind = "daily" | "review";
@@ -27,6 +28,8 @@ export default function Learn() {
   const [items, setItems] = useState<Item[]>([]);
   const [dailyItems, setDailyItems] = useState<Item[]>([]);
   const [progress, setProgress] = useState<Progress | null>(null);
+  const [achievements, setAchievements] = useState<Achievement[]>([]);
+  const [selectedBadge, setSelectedBadge] = useState<Achievement | null>(null);
   const [loading, setLoading] = useState(true);
   const [phase, setPhase] = useState<Phase>("home");
   const [quizKind, setQuizKind] = useState<QuizKind>("daily");
@@ -41,9 +44,10 @@ export default function Learn() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.learnToday(lang);
+      const [res, ach] = await Promise.all([api.learnToday(lang), api.achievements(lang)]);
       setDailyItems(res.items);
       setProgress(res.progress);
+      setAchievements(ach.items);
     } catch (e) {
       console.warn(e);
     } finally {
@@ -180,6 +184,29 @@ export default function Learn() {
           )}
         </Pressable>
       </View>
+
+      <View style={styles.lessonCard} testID="achievements-card">
+        <View style={styles.reviewHeader}>
+          <Text style={styles.lessonTitle}>🏅 {t.achievements}</Text>
+          <Text style={styles.achCount} testID="achievements-count">
+            {achievements.filter((a) => a.unlocked).length} / {achievements.length}
+          </Text>
+        </View>
+        <View style={styles.badgeGrid}>
+          {achievements.map((a) => (
+            <Pressable
+              key={a.id}
+              style={[styles.badge, !a.unlocked && styles.badgeLocked]}
+              onPress={() => setSelectedBadge(a)}
+              testID={`badge-${a.id}`}
+              accessibilityLabel={a.title}
+            >
+              <Text style={styles.badgeEmoji}>{a.unlocked ? a.emoji : "🔒"}</Text>
+              <Text style={styles.badgeTitle} numberOfLines={2}>{a.title}</Text>
+            </Pressable>
+          ))}
+        </View>
+      </View>
     </ScrollView>
   );
 
@@ -265,6 +292,20 @@ export default function Learn() {
       {quizKind === "daily" && wrongIds.length > 0 && (
         <Text style={styles.reviewHint} testID="review-hint">🎯 {wrongIds.length} {t.weakSigns}</Text>
       )}
+      {result?.newly_unlocked?.length > 0 && (
+        <View style={styles.newBadges} testID="new-badges">
+          <Text style={styles.newBadgesTitle}>🎉 {t.newBadge}</Text>
+          {result.newly_unlocked.map((a: Achievement) => (
+            <View key={a.id} style={styles.newBadgeRow}>
+              <Text style={styles.newBadgeEmoji}>{a.emoji}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.newBadgeName}>{a.title}</Text>
+                <Text style={styles.newBadgeDesc}>{a.description}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
       <Pressable style={styles.primaryBtn} onPress={() => { setPhase("home"); load(); }} testID="quiz-finish">
         <Text style={styles.primaryBtnText}>{t.finish}</Text>
       </Pressable>
@@ -288,6 +329,23 @@ export default function Learn() {
       ) : (
         renderResult()
       )}
+
+      <Modal visible={!!selectedBadge} transparent animationType="fade" onRequestClose={() => setSelectedBadge(null)}>
+        <Pressable style={styles.badgeModalBg} onPress={() => setSelectedBadge(null)} testID="badge-modal-bg">
+          {selectedBadge && (
+            <View style={styles.badgeModal} testID="badge-modal">
+              <Text style={styles.badgeModalEmoji}>{selectedBadge.unlocked ? selectedBadge.emoji : "🔒"}</Text>
+              <Text style={styles.badgeModalTitle}>{selectedBadge.title}</Text>
+              <Text style={styles.badgeModalDesc}>{selectedBadge.description}</Text>
+              <Text style={[styles.badgeModalState, { color: selectedBadge.unlocked ? colors.success : colors.muted }]}>
+                {selectedBadge.unlocked
+                  ? `✅ ${t.unlockedOn} · ${new Date(selectedBadge.unlocked_at!).toLocaleDateString(lang === "es" ? "es-MX" : "en-US")}`
+                  : `🔒 ${t.locked}`}
+              </Text>
+            </View>
+          )}
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -334,6 +392,24 @@ const styles = StyleSheet.create({
   reviewStats: { gap: spacing.xs, alignItems: "center" },
   reviewStat: { color: colors.onSurfaceSecondary, fontWeight: "700", fontSize: 14 },
   reviewHint: { color: colors.warning, fontWeight: "700", fontSize: 13 },
+  achCount: { color: colors.brandPrimary, fontWeight: "800", fontSize: 14 },
+  badgeGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  badge: { width: "30%", flexGrow: 1, minWidth: 90, backgroundColor: colors.brandTertiary, borderRadius: radius.md, padding: spacing.sm, alignItems: "center", gap: 4, borderWidth: 1, borderColor: colors.brandPrimary, minHeight: 84, justifyContent: "center" },
+  badgeLocked: { backgroundColor: colors.surfaceTertiary, borderColor: colors.border, opacity: 0.6 },
+  badgeEmoji: { fontSize: 28 },
+  badgeTitle: { color: colors.onSurface, fontSize: 11, fontWeight: "700", textAlign: "center" },
+  newBadges: { width: "100%", backgroundColor: colors.brandTertiary, borderRadius: radius.md, padding: spacing.md, gap: spacing.sm, borderWidth: 1, borderColor: colors.brandPrimary },
+  newBadgesTitle: { color: colors.onBrandTertiary, fontWeight: "800", fontSize: 15, textAlign: "center" },
+  newBadgeRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+  newBadgeEmoji: { fontSize: 32 },
+  newBadgeName: { color: colors.onSurface, fontWeight: "800", fontSize: 14 },
+  newBadgeDesc: { color: colors.onSurfaceSecondary, fontSize: 12 },
+  badgeModalBg: { flex: 1, backgroundColor: "rgba(0,0,0,0.75)", alignItems: "center", justifyContent: "center", padding: spacing.xl },
+  badgeModal: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, padding: spacing.xl, alignItems: "center", gap: spacing.sm, width: "100%", borderWidth: 1, borderColor: colors.border },
+  badgeModalEmoji: { fontSize: 72 },
+  badgeModalTitle: { color: colors.onSurface, fontSize: 20, fontWeight: "800", textAlign: "center" },
+  badgeModalDesc: { color: colors.onSurfaceSecondary, fontSize: 14, textAlign: "center" },
+  badgeModalState: { fontWeight: "700", fontSize: 12, marginTop: spacing.sm },
   quizContent: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing.xxl },
   progressBar: { flexDirection: "row", gap: 4 },
   progressSeg: { flex: 1, height: 6, borderRadius: 3, backgroundColor: colors.surfaceTertiary },

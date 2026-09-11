@@ -1,0 +1,35 @@
+{
+  "summary": "Iteration 5 validated the two NEW features (Frases Completas + Logros y Medallas) end-to-end. BACKEND: 7/7 pytest tests pass in /app/backend/tests/test_phrases_achievements.py. Phrases — GET /api/phrases?language=es (no auth) returns items length 20 and categories length 4, every item exposes {id, category, text, category_label, category_emoji}, and '¿Dónde está el baño?' is present; language=en returns 20 items including 'Where is the bathroom?'; invalid language=fr → 422. Achievements — GET /api/learn/achievements without token → 401. Fresh user (unique phone per run) → items=12, unlocked_count=0, total=12, each item has {id, emoji, title, description, unlocked:false, unlocked_at:null}. POST /api/learn/complete with all 5 correct_ids (score=5, total=5, wrong_ids=[]) returns counted=true, achievements_count=2, newly_unlocked contains 'first_lesson' AND 'perfect_lesson' each with populated emoji/title/description; a follow-up GET /api/learn/achievements shows unlocked_count=2 with both entries flipped to unlocked:true and an ISO unlocked_at (contains 'T'); language=en returns 'First lesson' / 'Perfect lesson'; posting learn/complete again → counted=false, newly_unlocked=[] (idempotent, no duplicates). fav_5 & messages_10 — creating 5 distinct favorites unlocks fav_5 (messages_10 still locked); then 10 POST /api/translate/text-to-sign unlocks messages_10. FRONTEND (mobile 390x844 web, fresh phone per run): Login (phone-input → send-otp-button → otp-0..5=123456 → name-input 'María López' → continue-btn → skip-btn) works and lands on translator-title. Translator: favorites-row visible, open-phrases chip visible → click opens phrase-sheet with phrase-search + phrase-cat-all + 4 category chips (phrase-cat-greetings/needs/communication/daily rendered in horizontal scroll row). Clicking phrase-cat-needs filters list; typing 'baño' in phrase-search filters to exactly 1 item. Click phrase-fav-phrase-4 → toast '⭐ Frase guardada' appears. Click phrase-phrase-4 → sheet closes and a new chat bubble '¿Dónde está el baño?' appears; favorites-row now shows fav-chip with text '¿Dónde está el baño?'. Aprender tab: achievements-card visible with achievements-count '0 / 12' and 12 badge-<id> tiles all showing 🔒. Click badge-streak_7 → badge-modal shows 'Semana perfecta' + 'Mantén una racha de 7 días' + '🔒 Bloqueado'; badge-modal-bg click closes it. start-lesson → 5 questions (got 2/5 correct by picking first option). quiz-result renders new-badges panel with '🎉 ¡Nueva medalla!' + '🎓 Primera lección' + description. quiz-finish → achievements-count becomes '1 / 12' and badge-first_lesson content is '🎓 Primera lección' with no 🔒. No JS errors, no red screens, no deprecated Expo packages detected in this iteration's scope.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phrases_achievements.py",
+    "/app/test_reports/pytest/phrases_achievements.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py PHRASES list has exactly 20 tuples across 4 categories (greetings 4, needs 6, communication 5, daily 5) — matches the 20-item spec but greetings has only 4 phrases while needs has 6; UX-wise unbalanced but matches the current fixed dataset. Non-blocking.",
+    "ACHIEVEMENTS list has exactly 12 entries; _check_achievements is idempotent (only appends to prog['achievements'] if id not present) and _achievement_views correctly returns only newly-passed ids (used for newly_unlocked in learn/complete responses).",
+    "_check_achievements queries db.favorites and db.messages count on every call — fine at MVP scale but consider caching if the endpoint becomes hot.",
+    "learn/achievements endpoint runs _check_achievements() on every GET and persists newly unlocked ids — good self-heal (unlocks that would have been missed if a badge criterion becomes true between complete calls).",
+    "PhraseSheet.tsx: search + category filters compose correctly; toast text '⭐ Frase guardada' matches spec. Star toggle depends on favorites array from parent, which refreshes after mutation via loadFavorites — verified in UI.",
+    "learn.tsx new-badges panel iterates over newlyUnlocked from server response — correctly wired to /learn/complete."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phrases_achievements.py (created)"
+  ],
+  "success_rate": {
+    "backend": "100% (7/7 tests pass)",
+    "frontend": "100% of tested flows pass (phrases sheet + fav + send + chat bubble; achievements grid + modal + first_lesson unlock announcement + count update)"
+  },
+  "seed_data_creation": "Fresh phone number per pytest run and per UI test run (timestamp-based) so achievements/progress start empty.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Frases (open-phrases → phrase-sheet) and Logros y medallas (achievements-card + 12 badge-<id> tiles + badge-modal + new-badges on quiz-result) are fully working. When Playwright is_visible returns False for a category chip that is rendered inside the horizontal scroll row, the chip still exists and is clickable — assert by clicking or by counting query results, not by is_visible. Achievement 'perfect_lesson' requires score>=total in POST /learn/complete; a lesson with all 5 correct answers unlocks both first_lesson and perfect_lesson in a single call. fav_5 fires when db.favorites count >=5 for the user (any language). messages_10 fires when db.messages count >=10, which is any user message (text-to-sign or sign-to-text).",
+  "rca_of_issue": "N/A — no issues found."
+}

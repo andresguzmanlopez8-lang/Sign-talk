@@ -22,6 +22,7 @@ import { colors, spacing, radius } from "@/src/theme";
 import { useLang } from "@/src/lang";
 import { exportChatPdf } from "@/src/exportChat";
 import ContactPicker from "@/src/components/ContactPicker";
+import PhraseSheet from "@/src/components/PhraseSheet";
 
 type Favorite = { id: string; text: string; language: "es" | "en" };
 
@@ -57,6 +58,7 @@ export default function Translator() {
   const [toast, setToast] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [shareText, setShareText] = useState<string | null>(null);
+  const [phrasesOpen, setPhrasesOpen] = useState(false);
   const scrollRef = useRef<FlatList<Msg>>(null);
 
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
@@ -98,13 +100,15 @@ export default function Translator() {
     }
   };
 
-  const sendFavorite = async (fav: Favorite) => {
+  const sendFavorite = async (fav: Favorite) => sendPhrase(fav.text);
+
+  const sendPhrase = async (phrase: string) => {
     if (loading) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setMode("voice");
     setLoading(true);
     try {
-      const msg = await api.textToSign(fav.text, lang);
+      const msg = await api.textToSign(phrase, lang);
       setMessages((prev) => [...prev, msg]);
       setAvatarSeq(msg.sign_sequence ?? null);
     } catch (e) {
@@ -459,6 +463,9 @@ export default function Translator() {
             keyboardShouldPersistTaps="handled"
             testID="favorites-row"
           >
+            <Pressable style={styles.phrasesChip} onPress={() => setPhrasesOpen(true)} testID="open-phrases">
+              <Text style={styles.phrasesChipText}>💬 {t.phrases}</Text>
+            </Pressable>
             <Text style={styles.favStar}>⭐</Text>
             {favorites.length === 0 ? (
               <Text style={styles.favEmpty}>{t.noFavorites}</Text>
@@ -523,6 +530,13 @@ export default function Translator() {
         </View>
       </View>
       <ContactPicker visible={shareText !== null} text={shareText} onClose={() => setShareText(null)} />
+      <PhraseSheet
+        visible={phrasesOpen}
+        onClose={() => setPhrasesOpen(false)}
+        onSend={sendPhrase}
+        onFavorite={saveFavorite}
+        isFavorite={isFav}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -627,6 +641,8 @@ const styles = StyleSheet.create({
   favScroll: { flexGrow: 0, marginBottom: spacing.sm },
   favRow: { gap: spacing.sm, alignItems: "center", paddingRight: spacing.lg },
   favStar: { fontSize: 14 },
+  phrasesChip: { paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.brandPrimary, minHeight: 36, justifyContent: "center" },
+  phrasesChipText: { color: colors.onBrandPrimary, fontWeight: "800", fontSize: 13 },
   favEmpty: { color: colors.muted, fontSize: 12 },
   favChip: { paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandPrimary, maxWidth: 220, minHeight: 36, justifyContent: "center" },
   favChipText: { color: colors.onBrandTertiary, fontWeight: "700", fontSize: 13 },

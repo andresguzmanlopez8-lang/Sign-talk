@@ -115,3 +115,7 @@
 ## Iteration 4 — main agent
 - Review mode: learn/complete now accepts wrong_ids → stored in weak_ids. GET /api/learn/review?language= (quiz from weak ids only), POST /api/learn/review/complete (correct → removed from weak, wrong → stays; streak untouched, counted=false, mastered=n).
 - Learn tab: review-card, weak-count badge, start-review (disabled when 0 weak), quiz-counter prefixed "Modo Repaso", result shows review-stats (mastered / still weak); daily result shows review-hint when there were wrong answers.
+
+## Iteration 5 — main agent
+- Phrases: GET /api/phrases?language= (public, 20 items, 4 categories). Translator chip open-phrases → phrase-sheet (phrase-search, phrase-cat-all / phrase-cat-<id>, phrase-<id> tap=send, phrase-fav-<id> star, phrase-sheet-close).
+- Achievements: GET /api/learn/achievements?language= → {items[12], unlocked_count, total}; learn/complete & review/complete now return newly_unlocked[]; progress has achievements_count. Learn tab: achievements-card, achievements-count, badge-<id> → badge-modal; result screen new-badges panel.
