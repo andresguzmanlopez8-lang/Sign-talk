@@ -256,6 +256,36 @@ def _seed_dictionary_data():
         ("Sorry", "Closed fist circles on the chest."),
         ("Love", "Cross both fists over the chest."),
         ("Friend", "Interlock both curled index fingers."),
+        ("Good morning", "Flat hand from chin forward, then the other arm rises like the sun."),
+        ("Good night", "Flat hand from chin forward, then one hand lowers over the other like the sunset."),
+        ("Goodbye", "Open hand waves side to side at shoulder height."),
+        ("Family", "Two F-hands start together and circle outward until pinkies touch."),
+        ("Mom", "Open hand with thumb tapping the chin."),
+        ("Dad", "Open hand with thumb tapping the forehead."),
+        ("House", "Flat hands trace a roof and walls in the air."),
+        ("Eat", "Flattened O-hand taps the mouth a couple of times."),
+        ("Drink", "C-hand tilts toward the mouth as if drinking from a cup."),
+        ("Water", "W-hand taps the chin twice."),
+        ("Help", "Fist with thumb up rests on the flat palm; both lift upward."),
+        ("Work", "Fists stacked; the top one taps the bottom wrist twice."),
+        ("School", "Clap flat hands twice, dominant hand on top."),
+        ("Today", "Y-hands drop down together in front of the body."),
+        ("Tomorrow", "Thumb of an A-hand on the cheek moves forward."),
+        ("Yesterday", "Thumb of an A-hand on the cheek moves back toward the ear."),
+        ("Good", "Flat hand from the chin moves down onto the other palm."),
+        ("Bad", "Flat hand from the chin flips down, palm facing away."),
+        ("Happy", "Flat hands brush upward on the chest twice."),
+        ("Sad", "Both open hands slide down in front of the face."),
+        ("Doctor", "Fingertips tap the inside of the opposite wrist, like checking a pulse."),
+        ("Money", "Flattened O-hand taps the open palm twice."),
+        ("Time", "Index finger taps the back of the opposite wrist, like a watch."),
+        ("Name", "H-hands cross and tap twice."),
+        ("Understand", "Index finger flicks up near the forehead."),
+        ("Learn", "Fingers pick up from the palm and move to the forehead."),
+        ("Bathroom", "T-hand shakes side to side."),
+        ("Phone", "Y-hand held against the cheek like a telephone."),
+        ("Tired", "Bent hands on the chest drop down and outward."),
+        ("Slow", "One hand slides slowly up the back of the other hand."),
     ]
     common_words_es = [
         ("Hola", "Saludo con la mano cerca de la frente."),
@@ -266,6 +296,36 @@ def _seed_dictionary_data():
         ("Perdón", "Puño cerrado haciendo círculos en el pecho."),
         ("Amor", "Cruza los puños sobre el pecho."),
         ("Amigo", "Entrelaza los índices curvados."),
+        ("Buenos días", "Mano plana desde la barbilla hacia adelante y el otro brazo sube como el sol."),
+        ("Buenas noches", "Mano plana desde la barbilla y luego una mano baja sobre la otra como el atardecer."),
+        ("Adiós", "Mano abierta se agita de lado a lado a la altura del hombro."),
+        ("Familia", "Dos manos en F juntas giran hacia afuera hasta que los meñiques se tocan."),
+        ("Mamá", "Mano abierta con el pulgar tocando la barbilla."),
+        ("Papá", "Mano abierta con el pulgar tocando la frente."),
+        ("Casa", "Manos planas dibujan el techo y las paredes en el aire."),
+        ("Comer", "Mano en O aplanada toca la boca un par de veces."),
+        ("Beber", "Mano en C se inclina hacia la boca como tomando de un vaso."),
+        ("Agua", "Mano en W toca la barbilla dos veces."),
+        ("Ayuda", "Puño con pulgar arriba sobre la palma abierta; ambas suben."),
+        ("Trabajo", "Puños apilados; el de arriba golpea la muñeca de abajo dos veces."),
+        ("Escuela", "Aplaude dos veces con las manos planas, la dominante encima."),
+        ("Hoy", "Manos en Y bajan juntas frente al cuerpo."),
+        ("Mañana", "Pulgar de la mano en A en la mejilla avanza hacia adelante."),
+        ("Ayer", "Pulgar de la mano en A en la mejilla retrocede hacia la oreja."),
+        ("Bien", "Mano plana desde la barbilla baja sobre la otra palma."),
+        ("Mal", "Mano plana desde la barbilla gira hacia abajo con la palma hacia afuera."),
+        ("Feliz", "Manos planas rozan el pecho hacia arriba dos veces."),
+        ("Triste", "Ambas manos abiertas bajan frente a la cara."),
+        ("Doctor", "Las yemas tocan la muñeca contraria como tomando el pulso."),
+        ("Dinero", "Mano en O aplanada golpea la palma abierta dos veces."),
+        ("Tiempo", "El índice toca el dorso de la muñeca contraria como un reloj."),
+        ("Nombre", "Manos en H se cruzan y tocan dos veces."),
+        ("Entender", "El índice se levanta rápido cerca de la frente."),
+        ("Aprender", "Los dedos recogen de la palma y suben a la frente."),
+        ("Baño", "Mano en T se sacude de lado a lado."),
+        ("Teléfono", "Mano en Y apoyada en la mejilla como un teléfono."),
+        ("Cansado", "Manos curvadas en el pecho caen hacia abajo y afuera."),
+        ("Despacio", "Una mano se desliza lentamente por el dorso de la otra."),
     ]
     for i, (w, d) in enumerate(common_words_en):
         entries.append({
@@ -291,11 +351,12 @@ def _seed_dictionary_data():
 
 @app.on_event("startup")
 async def seed():
-    count = await db.dictionary.count_documents({})
-    if count == 0:
-        entries = _seed_dictionary_data()
-        await db.dictionary.insert_many(entries)
-        logging.info(f"Seeded {len(entries)} dictionary entries")
+    entries = _seed_dictionary_data()
+    existing = set(await db.dictionary.distinct("id"))
+    missing = [e for e in entries if e["id"] not in existing]
+    if missing:
+        await db.dictionary.insert_many(missing)
+        logging.info(f"Seeded {len(missing)} new dictionary entries")
 
 @api_router.get("/dictionary")
 async def get_dictionary(language: Optional[str] = None, q: Optional[str] = None, letter: Optional[str] = None):

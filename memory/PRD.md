@@ -15,7 +15,7 @@ Mobile app for bidirectional translation between Sign Language (LSM/ASL) and Spo
    - Sign→Text mode: Front camera view + big record button. Uses GPT to simulate sign recognition. TTS plays translated audio.
    - Text/Voice→Sign mode: Text field or mic. Whisper transcribes voice. Result animated as ASL letter GIFs (avatar).
    - Chat history with WhatsApp-style bubbles. Language toggle LSM↔ASL.
-5. **Dictionary tab**: 69 seeded entries (A-Z LSM + A-Z ASL + 8 common words each). Search, A-Z filter chips, letter/word filter, detail modal with GIF + description.
+5. **Dictionary tab**: 129 seeded entries (A-Z LSM + A-Z ASL + 38 everyday words each; seed upserts missing ids on startup). Search, A-Z filter chips, letter/word filter, detail modal with GIF + description.
 6. **Profile tab**: Avatar/name/phone, edit profile, language preference, logout.
 7. **Frases Favoritas**: ⭐ on any chat bubble saves the phrase; horizontal favorites row above the composer sends it again as Text→Sign in one tap (long-press removes).
 8. **Modo Aprendizaje (Learn tab 🎓)**: Daily lesson of 5 signs (deterministic per user/day, prioritizes unlearned signs). 4-option quiz with feedback. Streak (🔥) counted once per day, resets if a day is skipped; best streak, learned count, lessons completed.
