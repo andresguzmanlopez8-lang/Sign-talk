@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 6 validated the 3 NEW features end-to-end: (1) Compartir Logro, (2) Favoritos en Perfil, (3) Recordatorio de Racha. BACKEND: 13/13 pytest tests pass in /app/backend/tests/test_favorites_new.py — POST /api/favorites x3 assigns order 0,1,2; GET /api/favorites?language=es returns TEST_A/TEST_B/TEST_C in that order; PUT /api/favorites/reorder with [C,B,A] returns success and GET reflects the new order; PATCH /api/favorites/{A} {text:'TEST_A renamed'} returns updated text and persists; PATCH unknown id → 404; PATCH with empty/whitespace text → 400; DELETE still works and the id disappears from GET; all 5 methods (GET/POST/PATCH/PUT/DELETE) return 401 without token. FRONTEND (mobile 390x844 web, fresh phone + localStorage.clear() per run): Login (phone-input → send-otp-button → otp-0..5=123456 → name-input 'María López' → continue-btn → skip-btn) → translator-title. Streak banner: streak-banner visible with streak-banner-text 'Empieza tu racha hoy con 5 señas nuevas'; streak-banner-go navigates to Aprender (learn-title visible); returning to Traductor still shows the banner; streak-banner-dismiss hides it; switching tabs (Aprender→Traductor) keeps it hidden for the day. Favorites: mode-voice → text-input 'Hola amigo' → send-btn → tap star on bubble; repeat with 'Buenas noches' → 2 favorites; favorites-row chips visible on Translator. Profile → settings-favorites → favorites-title '⭐ Frases favoritas', fav-count='2', 2 rows in order [Hola amigo, Buenas noches]. fav-down on row 1 swaps → first row now 'Buenas noches'. fav-rename opens rename-modal, edit + rename-save → row text updated to 'Buenas noches a todos'. fav-delete opens per-row confirm block fav-confirm-<id>; fav-confirm-no-<id> hides it; fav-delete again + fav-confirm-yes-<id> deletes the row → fav-count='1'. fav-filter-en → count='0' and empty state. favorites-back returns to Perfil. Badges (Aprender): completed a 5-question lesson (2/5); quiz-result shows new-badges panel with share-new-first_lesson (📤); quiz-finish → badge-first_lesson renders '🎓 Primera lección' (unlocked); clicking opens badge-modal with medal-card containing 'SignBridge', 'Primera lección', 'María López', '🔥 1', '✋ 2 Señas dominadas', description, and share-badge-whatsapp button; share-badge-image is absent on web (Platform.OS !== 'web' guard) ✓. Clicking share-badge-whatsapp calls window.open with 'https://wa.me/?text=%F0%9F%8F%85%20%C2%A1Desbloque%C3%A9%20una%20medalla%20en%20SignBridge!%0A%F0%9F%8E%93%20Primera%20lecci%C3%B3n...' — decoded contains both 'SignBridge' and 'Primera lección'; no JS crash. badge-modal-bg click closes the modal. Locked badge (badge-streak_30) opens a modal showing 🔒 with NO share buttons (share-badge-whatsapp and share-badge-image both absent). Regression: export-pdf still present on translator; favorites chips still visible; login+onboarding still works. No red screens, no deprecated Expo packages, no console errors.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Translator favorites-row reload after edits in manager", "issue": "useFocusEffect on translator DOES call api.favorites(lang) on focus, but after doing several edits in /favorites and popping back → switching to Traductor tab, the chips shown right after navigation (within ~1.5s) still displayed the pre-edit texts. This is likely a focus-timing / cache race, not a hard bug; a second visit refreshes correctly. Non-blocking.", "affected_testIDs": ["favorites-row", "fav-chip-<id>"]}
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_favorites_new.py",
+    "/app/test_reports/pytest/favorites_new.xml"
+  ],
+  "action_items": [
+    "Doc alignment (not a bug): The spec describes plain testIDs 'fav-confirm-yes' and 'fav-confirm-no', but the code uses per-row 'fav-confirm-yes-<id>' and 'fav-confirm-no-<id>'. Functionality is correct; consider aligning either the spec or the testIDs for future automated tests.",
+    "Optional: force an extra api.favorites(lang) refresh when the /favorites screen unmounts (e.g., router param or global event) so that returning to Translator immediately reflects renames/deletions without a second focus."
+  ],
+  "critical_code_review_comments": [
+    "server.py favorites: POST computes order from count_documents on the same {user_id, language} scope — this makes the initial 0/1/2 ordering deterministic; PUT /favorites/reorder uses bulk UpdateOne scoped to user_id (cannot reorder another user's favs). Good.",
+    "PATCH /favorites/{id} correctly returns 404 when matched_count==0 and 400 when text is empty after strip(). Rename does not touch the order field — safe.",
+    "StreakBanner uses AsyncStorage DISMISS_KEY = today() ISO date — dismissal automatically expires next day. Note: on the web preview localStorage persists across test runs, so tests must localStorage.clear() before login to see the banner.",
+    "MedalCard uses forwardRef + collapsable={false} so react-native-view-shot can capture it on native; ShareButtons only renders the image button when onImage is provided, and learn.tsx passes onImage={Platform.OS !== 'web' ? shareBadgeImage : undefined} — correct native-only gating.",
+    "buildBadgeShareText builds a text that always includes 'SignBridge' and the localized badge title; wa.me URL is constructed via Linking.openURL(`https://wa.me/?text=${encodeURIComponent(text)}`) which on web triggers window.open — verified to contain both 'SignBridge' and 'Primera lección' when decoded.",
+    "learn.tsx badge-modal correctly branches on selectedBadge.unlocked: unlocked → MedalCard + ShareButtons; locked → 🔒 + title + description + '🔒 Bloqueado' with no share buttons. Verified in UI."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_favorites_new.py (created)"
+  ],
+  "success_rate": {
+    "backend": "100% (13/13 tests pass)",
+    "frontend": "100% of tested flows pass — streak banner (visible/go/back/dismiss/persistence), favorites CRUD (create/reorder/rename/delete-with-confirm/en-filter/back), badge modal + WhatsApp share (URL-encoded, contains SignBridge & Primera lección), no-image-button on web, locked badge modal without share buttons, regression (PDF export present, chips render, login+onboarding)."
+  },
+  "seed_data_creation": "Fresh phone number (timestamp-based) + localStorage.clear() per browser run so streak/dismiss/favorites/achievements start from zero.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Streak banner dismissal is persisted in localStorage under key 'signbridge_streak_banner_dismissed' with value = today's ISO date. In web preview, localStorage persists across runs — always call `page.evaluate(\"localStorage.clear()\")` before login when testing the banner, otherwise it stays hidden even for a fresh phone. Favorites confirm buttons use per-id testIDs 'fav-confirm-yes-<id>' and 'fav-confirm-no-<id>' (not the plain 'fav-confirm-yes/fav-confirm-no' the spec text lists). Translator text-input only appears when mode-voice is active — click [data-testid=mode-voice] first, then wait ~500ms before filling. WhatsApp share on web calls window.open — monkey-patch window.open before clicking share-badge-whatsapp to capture the URL: `window.open = (u,...r)=>{window.__opened.push(u); ...}`. share-badge-image must be absent on web (Platform.OS !== 'web' guard in learn.tsx line 399). Locked badge modal must not render any share button.",
+  "rca_of_issue": "N/A — all 3 new features work as specified."
+}

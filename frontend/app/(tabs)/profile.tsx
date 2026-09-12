@@ -128,6 +128,11 @@ export default function Profile() {
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>{t.settings}</Text>
+        <Pressable style={styles.settingRow} onPress={() => router.push("/favorites")} testID="settings-favorites">
+          <Text style={styles.settingIcon}>⭐</Text>
+          <Text style={styles.settingLabel}>{t.manageFavorites}</Text>
+          <Text style={styles.chev}>›</Text>
+        </Pressable>
         <Pressable style={styles.settingRow} onPress={() => router.push("/permissions")} testID="settings-permissions">
           <Text style={styles.settingIcon}>🔐</Text>
           <Text style={styles.settingLabel}>{t.permissions}</Text>

@@ -119,3 +119,8 @@
 ## Iteration 5 — main agent
 - Phrases: GET /api/phrases?language= (public, 20 items, 4 categories). Translator chip open-phrases → phrase-sheet (phrase-search, phrase-cat-all / phrase-cat-<id>, phrase-<id> tap=send, phrase-fav-<id> star, phrase-sheet-close).
 - Achievements: GET /api/learn/achievements?language= → {items[12], unlocked_count, total}; learn/complete & review/complete now return newly_unlocked[]; progress has achievements_count. Learn tab: achievements-card, achievements-count, badge-<id> → badge-modal; result screen new-badges panel.
+
+## Iteration 6 — main agent
+- Favorites manager: PATCH /api/favorites/{id} {text}, PUT /api/favorites/reorder {ids}; GET sorted by `order`. Screen /favorites (from profile settings-favorites): fav-filter-es/en, fav-count, fav-row-<id>, fav-up/fav-down-<id>, fav-rename-<id> → rename-modal (rename-input, rename-save, rename-cancel), fav-delete-<id> → fav-confirm-<id> (fav-confirm-yes/no-<id>), favorites-back.
+- Share badge: badge-modal for unlocked badge shows medal-card + share-badge-whatsapp (whatsapp://send?text fallback wa.me) + share-badge-image (native only). Result screen new badges have share-new-<id>.
+- Streak banner: streak-banner in translator when lesson pending (streak-banner-text, streak-banner-go → learn tab, streak-banner-dismiss stores today's date in AsyncStorage).

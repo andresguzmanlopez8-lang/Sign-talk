@@ -504,12 +504,18 @@ class FavoriteReq(BaseModel):
     text: str
     language: Literal["es", "en"] = "es"
 
+class FavoriteUpdateReq(BaseModel):
+    text: str
+
+class FavoriteReorderReq(BaseModel):
+    ids: List[str]
+
 @api_router.get("/favorites")
 async def list_favorites(language: Optional[str] = None, user=Depends(get_current_user)):
     query = {"user_id": user["id"]}
     if language:
         query["language"] = language
-    items = await db.favorites.find(query, {"_id": 0}).sort("created_at", -1).to_list(200)
+    items = await db.favorites.find(query, {"_id": 0}).sort([("order", 1), ("created_at", -1)]).to_list(200)
     return items
 
 @api_router.post("/favorites")
@@ -520,16 +526,37 @@ async def add_favorite(req: FavoriteReq, user=Depends(get_current_user)):
     existing = await db.favorites.find_one({"user_id": user["id"], "text": text, "language": req.language}, {"_id": 0})
     if existing:
         return existing
+    count = await db.favorites.count_documents({"user_id": user["id"], "language": req.language})
     fav = {
         "id": str(uuid.uuid4()),
         "user_id": user["id"],
         "text": text,
         "language": req.language,
+        "order": count,
         "created_at": datetime.now(timezone.utc),
     }
     await db.favorites.insert_one(fav)
     fav.pop("_id", None)
     return fav
+
+@api_router.patch("/favorites/{fav_id}")
+async def rename_favorite(fav_id: str, req: FavoriteUpdateReq, user=Depends(get_current_user)):
+    text = req.text.strip()
+    if not text:
+        raise HTTPException(400, "Empty text")
+    res = await db.favorites.update_one({"id": fav_id, "user_id": user["id"]}, {"$set": {"text": text}})
+    if res.matched_count == 0:
+        raise HTTPException(404, "Not found")
+    return await db.favorites.find_one({"id": fav_id}, {"_id": 0})
+
+@api_router.put("/favorites/reorder")
+async def reorder_favorites(req: FavoriteReorderReq, user=Depends(get_current_user)):
+    from pymongo import UpdateOne
+    if not req.ids:
+        return {"success": True}
+    ops = [UpdateOne({"id": fid, "user_id": user["id"]}, {"$set": {"order": i}}) for i, fid in enumerate(req.ids)]
+    await db.favorites.bulk_write(ops)
+    return {"success": True}
 
 @api_router.delete("/favorites/{fav_id}")
 async def delete_favorite(fav_id: str, user=Depends(get_current_user)):

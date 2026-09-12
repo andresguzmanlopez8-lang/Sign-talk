@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useState } from "react";
-import { View, Text, StyleSheet, Pressable, ActivityIndicator, ScrollView, RefreshControl, Modal } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { View, Text, StyleSheet, Pressable, ActivityIndicator, ScrollView, RefreshControl, Modal, Linking, Platform } from "react-native";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
+import * as Sharing from "expo-sharing";
+import { captureRef } from "react-native-view-shot";
 import { api } from "@/src/api";
 import { colors, spacing, radius } from "@/src/theme";
 import { useLang } from "@/src/lang";
+import { MedalCard, ShareButtons, buildBadgeShareText } from "@/src/components/MedalCard";
 
 type Entry = { id: string; label: string; kind: string; description: string; emoji?: string | null; gif_url?: string | null; image_url?: string | null };
 type Item = { entry: Entry; options: string[] };
@@ -40,6 +43,9 @@ export default function Learn() {
   const [result, setResult] = useState<any | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [loadingReview, setLoadingReview] = useState(false);
+  const [userName, setUserName] = useState<string | null>(null);
+  const [sharing, setSharing] = useState(false);
+  const cardRef = useRef<View>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -48,12 +54,41 @@ export default function Learn() {
       setDailyItems(res.items);
       setProgress(res.progress);
       setAchievements(ach.items);
+      api.me().then((u) => setUserName(u?.name ?? null)).catch(() => {});
     } catch (e) {
       console.warn(e);
     } finally {
       setLoading(false);
     }
   }, [lang]);
+
+  const shareLabels = { intro: t.shareBadgeText, streak: t.streakLabel, signs: t.signsMastered, days: t.days };
+
+  const shareBadgeWhatsApp = async (badge: Achievement) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const text = encodeURIComponent(buildBadgeShareText(badge, progress?.streak ?? 0, progress?.learned_count ?? 0, shareLabels));
+    const native = `whatsapp://send?text=${text}`;
+    const web = `https://wa.me/?text=${text}`;
+    try {
+      if (Platform.OS !== "web" && (await Linking.canOpenURL(native))) await Linking.openURL(native);
+      else await Linking.openURL(web);
+    } catch (e) {
+      console.warn("share wa", e);
+    }
+  };
+
+  const shareBadgeImage = async () => {
+    if (!cardRef.current) return;
+    setSharing(true);
+    try {
+      const uri = await captureRef(cardRef, { format: "png", quality: 1 });
+      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: "image/png", dialogTitle: t.achievements });
+    } catch (e) {
+      console.warn("share img", e);
+    } finally {
+      setSharing(false);
+    }
+  };
 
   useEffect(() => {
     setPhase("home");
@@ -113,6 +148,14 @@ export default function Learn() {
       const res = quizKind === "review" ? await api.learnReviewComplete(payload) : await api.learnComplete(payload);
       setResult(res);
       setProgress(res);
+      if (res.newly_unlocked?.length) {
+        setAchievements((prev) =>
+          prev.map((a) => {
+            const n = res.newly_unlocked.find((x: Achievement) => x.id === a.id);
+            return n ? { ...a, ...n } : a;
+          })
+        );
+      }
       setPhase("result");
     } catch (e) {
       console.warn(e);
@@ -302,6 +345,9 @@ export default function Learn() {
                 <Text style={styles.newBadgeName}>{a.title}</Text>
                 <Text style={styles.newBadgeDesc}>{a.description}</Text>
               </View>
+              <Pressable style={styles.miniShare} onPress={() => shareBadgeWhatsApp(a)} testID={`share-new-${a.id}`} accessibilityLabel={t.shareWhatsApp}>
+                <Text style={styles.miniShareText}>📤</Text>
+              </Pressable>
             </View>
           ))}
         </View>
@@ -333,16 +379,37 @@ export default function Learn() {
       <Modal visible={!!selectedBadge} transparent animationType="fade" onRequestClose={() => setSelectedBadge(null)}>
         <Pressable style={styles.badgeModalBg} onPress={() => setSelectedBadge(null)} testID="badge-modal-bg">
           {selectedBadge && (
-            <View style={styles.badgeModal} testID="badge-modal">
-              <Text style={styles.badgeModalEmoji}>{selectedBadge.unlocked ? selectedBadge.emoji : "🔒"}</Text>
-              <Text style={styles.badgeModalTitle}>{selectedBadge.title}</Text>
-              <Text style={styles.badgeModalDesc}>{selectedBadge.description}</Text>
-              <Text style={[styles.badgeModalState, { color: selectedBadge.unlocked ? colors.success : colors.muted }]}>
-                {selectedBadge.unlocked
-                  ? `✅ ${t.unlockedOn} · ${new Date(selectedBadge.unlocked_at!).toLocaleDateString(lang === "es" ? "es-MX" : "en-US")}`
-                  : `🔒 ${t.locked}`}
-              </Text>
-            </View>
+            <Pressable style={styles.badgeModal} onPress={() => {}} testID="badge-modal">
+              {selectedBadge.unlocked ? (
+                <>
+                  <MedalCard
+                    ref={cardRef}
+                    badge={selectedBadge}
+                    streak={progress?.streak ?? 0}
+                    learned={progress?.learned_count ?? 0}
+                    userName={userName}
+                    labels={{ streak: t.streakLabel, signs: t.signsMastered, days: t.days }}
+                  />
+                  <Text style={styles.badgeModalDesc}>{selectedBadge.description}</Text>
+                  <Text style={[styles.badgeModalState, { color: colors.success }]}>
+                    ✅ {t.unlockedOn} · {new Date(selectedBadge.unlocked_at!).toLocaleDateString(lang === "es" ? "es-MX" : "en-US")}
+                  </Text>
+                  <ShareButtons
+                    onWhatsApp={() => shareBadgeWhatsApp(selectedBadge)}
+                    onImage={Platform.OS !== "web" ? shareBadgeImage : undefined}
+                    busy={sharing}
+                    labels={{ whatsapp: t.shareWhatsApp, image: t.shareImage }}
+                  />
+                </>
+              ) : (
+                <>
+                  <Text style={styles.badgeModalEmoji}>🔒</Text>
+                  <Text style={styles.badgeModalTitle}>{selectedBadge.title}</Text>
+                  <Text style={styles.badgeModalDesc}>{selectedBadge.description}</Text>
+                  <Text style={[styles.badgeModalState, { color: colors.muted }]}>🔒 {t.locked}</Text>
+                </>
+              )}
+            </Pressable>
           )}
         </Pressable>
       </Modal>
@@ -410,6 +477,8 @@ const styles = StyleSheet.create({
   badgeModalTitle: { color: colors.onSurface, fontSize: 20, fontWeight: "800", textAlign: "center" },
   badgeModalDesc: { color: colors.onSurfaceSecondary, fontSize: 14, textAlign: "center" },
   badgeModalState: { fontWeight: "700", fontSize: 12, marginTop: spacing.sm },
+  miniShare: { width: 40, height: 40, borderRadius: 20, backgroundColor: "rgba(0,0,0,0.25)", alignItems: "center", justifyContent: "center" },
+  miniShareText: { fontSize: 18 },
   quizContent: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing.xxl },
   progressBar: { flexDirection: "row", gap: 4 },
   progressSeg: { flex: 1, height: 6, borderRadius: 3, backgroundColor: colors.surfaceTertiary },

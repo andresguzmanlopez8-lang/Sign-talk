@@ -16,6 +16,7 @@ import { useAudioPlayer, useAudioRecorder, AudioModule, RecordingPresets, setAud
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useFocusEffect } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { api } from "@/src/api";
 import { colors, spacing, radius } from "@/src/theme";
@@ -23,6 +24,7 @@ import { useLang } from "@/src/lang";
 import { exportChatPdf } from "@/src/exportChat";
 import ContactPicker from "@/src/components/ContactPicker";
 import PhraseSheet from "@/src/components/PhraseSheet";
+import StreakBanner from "@/src/components/StreakBanner";
 
 type Favorite = { id: string; text: string; language: "es" | "en" };
 
@@ -70,9 +72,11 @@ export default function Translator() {
     loadMessages();
   }, []);
 
-  useEffect(() => {
-    api.favorites(lang).then(setFavorites).catch(() => {});
-  }, [lang]);
+  useFocusEffect(
+    useCallback(() => {
+      api.favorites(lang).then(setFavorites).catch(() => {});
+    }, [lang])
+  );
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -83,7 +87,7 @@ export default function Translator() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     try {
       const fav = await api.addFavorite(text, lang);
-      setFavorites((prev) => (prev.some((f) => f.id === fav.id) ? prev : [fav, ...prev]));
+      setFavorites((prev) => (prev.some((f) => f.id === fav.id) ? prev : [...prev, fav]));
       showToast(`⭐ ${t.savedFavorite}`);
     } catch (e) {
       console.warn(e);
@@ -361,6 +365,8 @@ export default function Translator() {
             <Text style={styles.toastText}>{toast}</Text>
           </View>
         )}
+
+        <StreakBanner />
 
         {/* Top: Camera or Avatar */}
         <View style={styles.top}>
