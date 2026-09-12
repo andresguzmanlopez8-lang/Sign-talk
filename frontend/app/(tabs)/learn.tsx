@@ -4,6 +4,7 @@ import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import * as Sharing from "expo-sharing";
+import { createAudioPlayer, setAudioModeAsync } from "expo-audio";
 import { captureRef } from "react-native-view-shot";
 import { api } from "@/src/api";
 import { colors, spacing, radius } from "@/src/theme";
@@ -45,7 +46,32 @@ export default function Learn() {
   const [loadingReview, setLoadingReview] = useState(false);
   const [userName, setUserName] = useState<string | null>(null);
   const [sharing, setSharing] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
   const cardRef = useRef<View>(null);
+  const playerRef = useRef<any>(null);
+
+  useEffect(() => () => playerRef.current?.remove?.(), []);
+
+  /** Pronounce the foreign-language sentence of a phrase question via backend TTS. */
+  const speakPhrase = async (text: string) => {
+    if (speaking) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSpeaking(true);
+    try {
+      // The sentence shown is in the *other* language: es UI → English voice, en UI → Spanish voice.
+      const voice = lang === "es" ? "alloy" : "nova";
+      const tts = await api.tts(text, voice);
+      await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: false });
+      playerRef.current?.remove?.();
+      const player = createAudioPlayer({ uri: `${api.base}${tts.url}` });
+      playerRef.current = player;
+      player.play();
+    } catch (e) {
+      console.warn("tts", e);
+    } finally {
+      setSpeaking(false);
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -269,7 +295,15 @@ export default function Learn() {
           <View style={[styles.emojiBox, styles.phraseBox]} testID="quiz-phrase">
             <Text style={styles.phraseTag}>🗣️ {t.phraseQuestion}</Text>
             <Text style={styles.phraseForeign}>“{current.entry.description}”</Text>
-            <Text style={styles.phraseCatEmoji}>{current.entry.emoji}</Text>
+            <Pressable
+              style={[styles.listenBtn, speaking && styles.btnDisabled]}
+              onPress={() => speakPhrase(current.entry.description)}
+              disabled={speaking}
+              testID="quiz-listen"
+              accessibilityLabel={t.listen}
+            >
+              {speaking ? <ActivityIndicator color={colors.onBrandPrimary} /> : <Text style={styles.listenText}>🔊 {t.listen}</Text>}
+            </Pressable>
           </View>
         ) : current.entry.emoji ? (
           <View style={styles.emojiBox} testID="quiz-emoji">
@@ -497,6 +531,8 @@ const styles = StyleSheet.create({
   phraseTag: { color: colors.brandPrimary, fontSize: 11, fontWeight: "800", textTransform: "uppercase", letterSpacing: 1 },
   phraseForeign: { color: colors.onSurface, fontSize: 22, fontWeight: "800", textAlign: "center", lineHeight: 30 },
   phraseCatEmoji: { fontSize: 28 },
+  listenBtn: { flexDirection: "row", alignItems: "center", gap: spacing.xs, backgroundColor: colors.brandPrimary, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderRadius: radius.pill, minHeight: 44, minWidth: 120, justifyContent: "center" },
+  listenText: { color: colors.onBrandPrimary, fontWeight: "800", fontSize: 14 },
   qTitle: { color: colors.onSurface, fontSize: 20, fontWeight: "800" },
   qDesc: { color: colors.onSurfaceSecondary, fontSize: 14, lineHeight: 20 },
   options: { gap: spacing.sm },

@@ -29,6 +29,7 @@ Mobile app for bidirectional translation between Sign Language (LSM/ASL) and Spo
 16. **Favoritos en Perfil**: Profile → "Gestionar frases favoritas" → `/favorites` screen (app/favorites.tsx): LSM/ASL filter, ▲▼ reorder (PUT /favorites/reorder {ids}), ✎ rename (PATCH /favorites/{id} {text}), 🗑 delete with inline confirm. Favorites now carry an `order` field; GET sorts by order.
 17. **Recordatorio de Racha**: StreakBanner (src/components/StreakBanner.tsx) at top of translator when `learnProgress.completed_today` is false; shows streak to keep (or "start today"), CTA to Learn tab, ✕ dismisses for the current day (AsyncStorage).
 18. **Practicar Frases**: ~60% of days (day-seeded RNG, `PHRASE_QUESTION_CHANCE`) one of the 5 daily slots is a full-phrase question: entry kind `phrase` (id `phrase-<i>`, label = phrase in user's language, description = the same phrase in the other language). Quiz asks "¿Cómo se dice esta frase?" with 4 phrase options. Phrase ids flow through learned_ids/weak_ids so Review Mode includes them (`_all_entries` = dictionary + `_phrase_entries`).
+19. **Escuchar Frases**: phrase questions have a 🔊 "Escuchar" button (`quiz-listen`) that plays the foreign sentence via `POST /tts` (voice alloy for English / nova for Spanish) using expo-audio `createAudioPlayer`.
 
 ## Backend Endpoints (/api)
 - `POST /auth/send-otp`, `POST /auth/verify-otp`, `GET /auth/me`, `POST /auth/onboard`, `PATCH /auth/profile`

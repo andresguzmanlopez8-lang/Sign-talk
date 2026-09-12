@@ -127,3 +127,6 @@
 
 ## Iteration 7 — main agent
 - Phrase questions in quiz: GET /api/learn/today may include (≈60% of user/day seeds) one item with entry.kind=="phrase" (id phrase-<i>, label in user's language, description = translation in other language, emoji = category emoji, 4 phrase options). Review includes weak phrase ids. Frontend: quiz-phrase block (foreign phrase in quotes), title "¿Cómo se dice esta frase?".
+
+## Iteration 8 — main agent
+- Listen button on phrase questions: quiz-listen → POST /api/tts (alloy when UI=es, nova when UI=en) → plays mp3 via expo-audio. Verified in browser: both /api/tts and /api/tts/<key>.mp3 return 200, no console errors.
