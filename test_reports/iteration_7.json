@@ -1,0 +1,34 @@
+{
+  "summary": "Iteration 7 validates the NEW 'Practicar Frases' feature end-to-end. BACKEND (4/4 pytest tests pass in /app/backend/tests/test_practicar_frases.py): (1) Iterated 8 fresh phones through GET /api/learn/today?language=es — every response contained exactly 5 items; at least one user received an entry with kind=='phrase' and at least one received none (deterministic per user+day, occasional not always). For every phrase item: entry.id matches ^phrase-\\d+$; entry.label equals the Spanish text of the same id from GET /api/phrases?language=es; entry.description equals the English text of the same id from GET /api/phrases?language=en; options has exactly 4 distinct entries, all are Spanish phrases (verified against phrases pool — no letter distractor leak), and entry.label is one of the options. (2) Determinism: two consecutive calls to /learn/today for the same user return identical items and identical option orders. (3) Weak/Review flow: chose a user whose lesson had a phrase item, POST /learn/complete with wrong_ids=[phrase id] → weak_ids contains it and weak_count>=1; GET /learn/review?language=es returned an item with that phrase id and kind=='phrase' and options[] contains entry.label; POST /learn/review/complete with correct_ids=[phrase id] → weak_count decreased, learned_count increased, id not in weak_ids. (4) EN symmetry: /learn/today?language=en with fresh phones — when a phrase item appears, entry.label is the English text, entry.description is the Spanish text, options are all English phrases including the label. FRONTEND (mobile 390x844): Seeded phone 555111000 via API (onboarded 'María López' es, wrong_ids=['phrase-14'] → weak). Login flow (phone-input → send-otp-button → otp-0..5=123456) reached Traductor directly (onboarding not shown for returning user); Aprender tab → weak-count='1' → start-review. Quiz shows [data-testid=quiz-phrase] containing '🗣️ FRASE COMPLETA' and '“One moment, please.”' with title '¿Cómo se dice esta frase?'; 4 [data-testid=option-*] buttons rendered ['Estoy aprendiendo lengua de señas.', 'Buenos días, que tengas buen día.', 'Un momento, por favor.', 'Necesito ayuda, por favor.']; clicked option 'Un momento, por favor.' → quiz-feedback '✅ ¡Correcto!' → quiz-next → quiz-result with review-stats '✅ Señas dominadas: 1  🎯 Aún por repasar: 0'. FRONTEND (non-phrase sanity): New phone → onboarded → start-lesson → question 1 rendered title '¿Qué seña es esta?' with description 'Punta del pulgar toca la del índice, otros dedos arriba.' and the styled emojiBox container (quiz-emoji when entry has emoji, else <Image> with gif_url/image_url). No red screens, no console errors, no deprecated Expo packages detected in the learn feature.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_practicar_frases.py",
+    "/app/test_reports/pytest/practicar_frases.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py line 645-655: today() seeds random.Random(f'{user_id}|{today}|{language}') → deterministic per user+day+language and stable across calls; PHRASE_QUESTION_CHANCE=0.6 gives the required occasional (~60%) phrase injection. Phrase pool prefers unlearned phrases; falls back to all if user has learned everything. Correct.",
+    "server.py _build_quiz_items() picks 3 distractors from same_kind entries (kind=='phrase' vs sign) → phrase options are guaranteed to be phrases only and sign options are letters only. No cross-kind leakage — verified against /api/phrases pool for all 4 options in every observed phrase question.",
+    "server.py _phrase_entries(language) uses label=text[language], description=text[other] and kind='phrase' so review view can render the phrase block. Symmetric for es/en — verified in test_today_en_phrase_shape.",
+    "learn.tsx line 268-284: correctly branches on entry.kind==='phrase' (renders quiz-phrase block with description in the OTHER language and 🗣️ tag) vs sign (renders quiz-emoji or Image); title switches between t.translatePhrase '¿Cómo se dice esta frase?' and t.whichSign '¿Qué seña es esta?'. qDesc is intentionally hidden for phrase items (description is already shown inside quiz-phrase block). Clean.",
+    "learn.tsx line 300: option testID uses the raw option text — safe because phrase strings do not contain characters that break selectors; verified with playwright."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_practicar_frases.py (created)"
+  ],
+  "success_rate": {
+    "backend": "100% (4/4 tests pass)",
+    "frontend": "100% of tested flows pass — phrase quiz (seed 555111000 → weak-count 1 → start-review → quiz-phrase 'One moment, please.' → 4 Spanish options → correct pick → ✅ ¡Correcto! → review-stats 'Señas dominadas: 1'), non-phrase sanity (title '¿Qué seña es esta?' + description + emojiBox container)."
+  },
+  "seed_data_creation": "Pre-seeded user +52555111000 via /api/auth/verify-otp (OTP 123456) + /api/auth/onboard (name 'María López', language 'es') + /api/learn/complete {wrong_ids:['phrase-14']} so weak_ids=['phrase-14'] before browser test. Other backend tests use timestamp-derived fresh phones per test to avoid state pollution.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Practicar Frases: phrase-14 = 'Un momento, por favor.' / 'One moment, please.' Deterministic seed is `${user_id}|${today}|${language}` with PHRASE_QUESTION_CHANCE=0.6 → ~60% of user/day combos get exactly one phrase item; the other ~40% get 5 sign items. Phrase option testIDs are 'option-<Spanish sentence with punctuation>' — playwright query_selector([data-testid=option-Un momento, por favor.]) works reliably. quiz-phrase block always shows the OTHER language ('One moment, please.' when app language is es) inside “…” curly quotes and the 🗣️ FRASE COMPLETA tag. On web preview the sign-question emoji sometimes appears as a small/invisible glyph inside the dark emojiBox — this is a font rendering issue on Chromium, not a code bug; native builds show the emoji correctly. Phrase ids flow into learned_ids/weak_ids exactly like sign ids so Review Mode and achievement counters treat them uniformly (learned_count includes phrases).",
+  "rca_of_issue": "N/A — feature works as specified across BE + FE."
+}

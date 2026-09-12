@@ -638,15 +638,47 @@ async def learn_progress(user=Depends(get_current_user)):
 async def learn_today(language: Literal["es", "en"] = "es", user=Depends(get_current_user)):
     import random
     prog = await _get_progress(user["id"])
-    entries = await db.dictionary.find({"language": language}, {"_id": 0}).to_list(500)
+    entries = await _all_entries(language)
+    signs = [e for e in entries if e["kind"] != "phrase"]
+    phrases = [e for e in entries if e["kind"] == "phrase"]
     learned = set(prog.get("learned_ids", []))
-    candidates = [e for e in entries if e["id"] not in learned]
-    if len(candidates) < LESSON_SIZE:
-        candidates = entries  # everything learned: cycle through again
     rng = random.Random(f"{user['id']}|{_today()}|{language}")
-    picked = rng.sample(candidates, min(LESSON_SIZE, len(candidates)))
+    # Occasionally (about 6 days out of 10) one slot becomes a full-phrase question.
+    with_phrase = rng.random() < PHRASE_QUESTION_CHANCE and len(phrases) >= 4
+    sign_slots = LESSON_SIZE - (1 if with_phrase else 0)
+    candidates = [e for e in signs if e["id"] not in learned]
+    if len(candidates) < sign_slots:
+        candidates = signs  # everything learned: cycle through again
+    picked = rng.sample(candidates, min(sign_slots, len(candidates)))
+    if with_phrase:
+        phrase_pool = [p for p in phrases if p["id"] not in learned] or phrases
+        picked.insert(rng.randrange(len(picked) + 1), rng.choice(phrase_pool))
     items = _build_quiz_items(entries, picked, rng)
     return {"date": _today(), "language": language, "items": items, "progress": _progress_view(prog)}
+
+PHRASE_QUESTION_CHANCE = 0.6
+
+def _phrase_entries(language: str) -> List[dict]:
+    """Full phrases as quiz entries: label = phrase in user's language, description = the other language."""
+    other = "en" if language == "es" else "es"
+    out = []
+    for i, (cat, es, en) in enumerate(PHRASES):
+        text = {"es": es, "en": en}
+        out.append({
+            "id": f"phrase-{i}",
+            "language": language,
+            "label": text[language],
+            "kind": "phrase",
+            "description": text[other],
+            "emoji": CATEGORY_LABELS[cat]["emoji"],
+            "gif_url": None,
+            "image_url": None,
+        })
+    return out
+
+async def _all_entries(language: str) -> List[dict]:
+    entries = await db.dictionary.find({"language": language}, {"_id": 0}).to_list(500)
+    return entries + _phrase_entries(language)
 
 @api_router.get("/learn/review")
 async def learn_review(language: Literal["es", "en"] = "es", user=Depends(get_current_user)):
@@ -654,7 +686,7 @@ async def learn_review(language: Literal["es", "en"] = "es", user=Depends(get_cu
     import random
     prog = await _get_progress(user["id"])
     weak = set(prog.get("weak_ids", []))
-    entries = await db.dictionary.find({"language": language}, {"_id": 0}).to_list(500)
+    entries = await _all_entries(language)
     picked = [e for e in entries if e["id"] in weak]
     rng = random.Random()
     rng.shuffle(picked)

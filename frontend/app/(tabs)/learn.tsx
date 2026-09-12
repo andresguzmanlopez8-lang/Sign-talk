@@ -265,7 +265,13 @@ export default function Learn() {
       </Text>
 
       <View style={styles.qImage}>
-        {current.entry.emoji ? (
+        {current.entry.kind === "phrase" ? (
+          <View style={[styles.emojiBox, styles.phraseBox]} testID="quiz-phrase">
+            <Text style={styles.phraseTag}>🗣️ {t.phraseQuestion}</Text>
+            <Text style={styles.phraseForeign}>“{current.entry.description}”</Text>
+            <Text style={styles.phraseCatEmoji}>{current.entry.emoji}</Text>
+          </View>
+        ) : current.entry.emoji ? (
           <View style={styles.emojiBox} testID="quiz-emoji">
             <Text style={styles.emojiBig}>{current.entry.emoji}</Text>
           </View>
@@ -277,8 +283,8 @@ export default function Learn() {
           />
         )}
       </View>
-      <Text style={styles.qTitle}>{t.whichSign}</Text>
-      <Text style={styles.qDesc}>{current.entry.description}</Text>
+      <Text style={styles.qTitle}>{current.entry.kind === "phrase" ? t.translatePhrase : t.whichSign}</Text>
+      {current.entry.kind !== "phrase" && <Text style={styles.qDesc}>{current.entry.description}</Text>}
 
       <View style={styles.options}>
         {current.options.map((opt) => {
@@ -487,6 +493,10 @@ const styles = StyleSheet.create({
   qImage: { width: "100%", height: 200, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, overflow: "hidden" },
   emojiBox: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.brandTertiary },
   emojiBig: { fontSize: 110 },
+  phraseBox: { padding: spacing.lg, gap: spacing.sm, backgroundColor: colors.surfaceTertiary },
+  phraseTag: { color: colors.brandPrimary, fontSize: 11, fontWeight: "800", textTransform: "uppercase", letterSpacing: 1 },
+  phraseForeign: { color: colors.onSurface, fontSize: 22, fontWeight: "800", textAlign: "center", lineHeight: 30 },
+  phraseCatEmoji: { fontSize: 28 },
   qTitle: { color: colors.onSurface, fontSize: 20, fontWeight: "800" },
   qDesc: { color: colors.onSurfaceSecondary, fontSize: 14, lineHeight: 20 },
   options: { gap: spacing.sm },
