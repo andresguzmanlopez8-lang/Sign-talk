@@ -54,7 +54,7 @@ Mobile app for bidirectional translation between Sign Language (LSM/ASL) and Spo
 - Upload limits (10 MB, audio MIME), Pydantic max_length on favorites (300), text-to-sign (500), tts (4000), sign-frame (~3 MB b64).
 - Generic 502 messages for STT/TTS/vision failures (no exception text leaked).
 - CORS: `CORS_ORIGINS` env (comma-separated) enables explicit origins + credentials; default `*` without credentials.
-- Remaining (deliberate demo): mock OTP 123456 is still returned by send-otp — replace with SMS provider before production.
+- OTP is now REAL via Twilio Verify (`TWILIO_ACCOUNT_SID/AUTH_TOKEN/VERIFY_SERVICE_SID` in backend/.env). Dev bypass: `OTP_DEV_BYPASS=true` + `OTP_TEST_NUMBERS` (E.164 list) accept `OTP_TEST_CODE` (123456) without SMS; if Twilio is not configured and bypass is on, all numbers are test numbers. send-otp returns `mode: test|sms` (no code leaked); otp screen shows the hint only for test numbers. Twilio errors mapped: invalid number 400, 60203/60202 429, 20404 expired 400, others 502.
 
 ## Env
 - `EMERGENT_LLM_KEY` for LLM/TTS/STT

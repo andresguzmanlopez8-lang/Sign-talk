@@ -18,7 +18,7 @@ import { useLang } from "@/src/lang";
 export default function Otp() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { phone, code } = useLocalSearchParams<{ phone: string; code: string }>();
+  const { phone, code, mode } = useLocalSearchParams<{ phone: string; code: string; mode?: string }>();
   const { t } = useLang();
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
   const [loading, setLoading] = useState(false);
@@ -85,7 +85,11 @@ export default function Otp() {
           <Text style={styles.subtitle}>
             {t.otpSentTo} {code} {phone}
           </Text>
-          <Text style={styles.hint}>Demo OTP: 123456</Text>
+          {mode === "test" ? (
+            <Text style={styles.hint} testID="otp-test-hint">Número de prueba · código 123456</Text>
+          ) : (
+            <Text style={styles.hint} testID="otp-sms-hint">Te enviamos un SMS con tu código</Text>
+          )}
         </View>
 
         <View style={styles.otpRow}>

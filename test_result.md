@@ -140,3 +140,6 @@
 ## Iteration 10 — main agent
 - UserContacts collection + Contacts Manager: POST /api/contacts/view (first access → created:true, message "Contacto sincronizado automáticamente", isSavedLocally true; repeat → created:false, lastSyncDate refreshed), GET /api/contacts (owner-scoped), DELETE /api/contacts/{id}.
 - UI: Profile → settings-contacts → /contacts screen: preview-panel, simulate-profile-view (Andy), sync-confirmation banner, contact-row-<id>/contact-name-<id>/contact-delete-<id>, contacts-back. ContactPicker: selecting a contact/manual number calls contacts/view and shows contact-sync-banner in send-options.
+
+## Iteration 11 — main agent
+- Twilio Verify OTP: send-otp → Twilio verifications.create (mode "sms") unless number in OTP_TEST_NUMBERS (mode "test", code 123456). verify-otp → verification_checks. Test numbers listed in /app/memory/test_credentials.md. Current TWILIO_AUTH_TOKEN provided by user is 31 chars → Twilio returns 20003 auth failed (mapped to 502) — waiting for corrected token.

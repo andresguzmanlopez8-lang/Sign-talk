@@ -1,4 +1,7 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Form, Response
+from fastapi.concurrency import run_in_threadpool
+from twilio.rest import Client as TwilioClient
+from twilio.base.exceptions import TwilioRestException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -31,7 +34,38 @@ EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALG = "HS256"
 
-MOCK_OTP = "123456"
+
+
+# ---- Twilio Verify (real SMS OTP) ----
+TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
+TWILIO_VERIFY_SERVICE_SID = os.environ.get("TWILIO_VERIFY_SERVICE_SID", "")
+twilio_client = (
+    TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+    if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_VERIFY_SERVICE_SID
+    else None
+)
+# Dev/test bypass: numbers in OTP_TEST_NUMBERS accept OTP_TEST_CODE without sending SMS.
+# If OTP_DEV_BYPASS is true and Twilio is NOT configured, every number is treated as a test number.
+OTP_DEV_BYPASS = os.environ.get("OTP_DEV_BYPASS", "false").lower() == "true"
+OTP_TEST_CODE = os.environ.get("OTP_TEST_CODE", "123456")
+OTP_TEST_NUMBERS = {n.strip() for n in os.environ.get("OTP_TEST_NUMBERS", "").split(",") if n.strip()}
+
+def _e164(country_code: str, phone: str) -> str:
+    digits = re.sub(r"\D", "", f"{country_code}{phone}")
+    if not 7 <= len(digits) <= 15:
+        raise HTTPException(400, "Número de teléfono inválido")
+    return f"+{digits}"
+
+def _is_test_number(full_phone: str) -> bool:
+    if not OTP_DEV_BYPASS:
+        return False
+    return full_phone in OTP_TEST_NUMBERS or twilio_client is None
+
+if twilio_client:
+    logging.info("Twilio Verify configured")
+else:
+    logging.warning("Twilio Verify NOT configured — %s", "dev bypass active for all numbers" if OTP_DEV_BYPASS else "OTP endpoints will return 503")
 
 # Brute-force protection for OTP verification: max attempts per phone within a window (in-memory).
 OTP_MAX_ATTEMPTS = 5
@@ -141,14 +175,48 @@ async def get_current_user(cred: Optional[HTTPAuthorizationCredentials] = Depend
 
 @api_router.post("/auth/send-otp")
 async def send_otp(req: SendOtpReq):
-    # Mock: OTP is always 123456
-    return {"success": True, "message": "OTP sent", "mock_otp": MOCK_OTP}
+    full_phone = _e164(req.country_code, req.phone)
+    if _is_test_number(full_phone):
+        return {"success": True, "message": "OTP sent", "mode": "test"}
+    if not twilio_client:
+        raise HTTPException(503, "SMS service not configured")
+    try:
+        verification = await run_in_threadpool(
+            lambda: twilio_client.verify.v2.services(TWILIO_VERIFY_SERVICE_SID).verifications.create(to=full_phone, channel="sms")
+        )
+    except TwilioRestException as e:
+        logging.warning(f"Twilio send error {e.code}: {e.msg}")
+        if e.code in (60200, 21211, 21614):
+            raise HTTPException(400, "Número de teléfono inválido")
+        if e.code == 60203:
+            raise HTTPException(429, "Demasiados envíos. Espera unos minutos.")
+        if e.code == 21608:
+            raise HTTPException(400, "Número no verificado en la cuenta de prueba de Twilio")
+        raise HTTPException(424, "No se pudo enviar el SMS. Inténtalo de nuevo.")
+    return {"success": True, "message": "OTP sent", "mode": "sms", "status": verification.status}
 
 @api_router.post("/auth/verify-otp")
 async def verify_otp(req: VerifyOtpReq):
-    full_phone = f"{req.country_code}{req.phone}"
+    full_phone = _e164(req.country_code, req.phone)
     _otp_throttle(full_phone)
-    if req.otp != MOCK_OTP:
+    if _is_test_number(full_phone):
+        approved = req.otp == OTP_TEST_CODE
+    else:
+        if not twilio_client:
+            raise HTTPException(503, "SMS service not configured")
+        try:
+            check = await run_in_threadpool(
+                lambda: twilio_client.verify.v2.services(TWILIO_VERIFY_SERVICE_SID).verification_checks.create(to=full_phone, code=req.otp)
+            )
+            approved = check.status == "approved"
+        except TwilioRestException as e:
+            logging.warning(f"Twilio check error {e.code}: {e.msg}")
+            if e.code == 20404:
+                raise HTTPException(400, "El código expiró. Solicita uno nuevo.")
+            if e.code == 60202:
+                raise HTTPException(429, "Demasiados intentos. Solicita un código nuevo.")
+            raise HTTPException(424, "No se pudo verificar el código. Inténtalo de nuevo.")
+    if not approved:
         _otp_record_failure(full_phone)
         raise HTTPException(400, "Invalid OTP")
     _otp_attempts.pop(full_phone, None)

@@ -1,0 +1,40 @@
+{
+  "summary": "Twilio Verify + dev-bypass OTP flow tested (backend + web UI). 13/13 backend tests pass on the API surface expected by the review: test numbers return mode:test without leaking any code, formatting variants normalize, 123456 succeeds, wrong OTP → 400 'Invalid OTP', invalid phone → 400 'Número de teléfono inválido', 5-wrong throttle → 6th → 429, and non-test numbers correctly return 502 with the generic Spanish message and no Twilio/SID leak (verified via localhost). Frontend UI test-hint shows 'Número de prueba · código 123456' (not 'Demo OTP'), OTP entry navigates onward, and after login Traductor loads with favorites-row visible. CRITICAL FRONTEND-VISIBLE BUG: the public preview URL is fronted by Cloudflare, which intercepts every origin-500/502 and replaces the body with its own HTML 502 page. The FastAPI 502 JSON ({'detail':'No se pudo enviar el SMS...'}) NEVER reaches the browser, so /phone shows a huge raw Cloudflare HTML blob inside phone-error instead of the Spanish message. Backend is behaving per spec; the issue is edge-CDN behavior + api.ts throwing the raw text.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/auth/send-otp", "issue": "Origin returns correct JSON 502 with Spanish detail, but Cloudflare edge (cf-ray header present, content-type text/html) swallows it before the client sees it. Consider mapping Twilio failures to a 4xx status (e.g. 400/409/503) so the JSON body is preserved through the CDN, or add an origin-error passthrough config."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "app/phone.tsx phone-error", "issue": "On a real (non-test) number the error text becomes the full Cloudflare 502 HTML page (starts with '<!DOCTYPE html>…preview.emergentagent.com | 502: Bad gateway'). Root cause: src/api.ts request() does `throw new Error(text)` with the raw response body when !res.ok, and the CDN body is HTML — not the backend's Spanish JSON. Fix: in request(), try JSON.parse and use .detail; on parse-failure or status>=500 fall back to a localized generic message (e.g. t.somethingWrong / 'Ocurrió un error, inténtalo de nuevo.').", "testID": "phone-error", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "phone → send-otp (real number)", "issue": "UI cannot display the Spanish 502 message because CDN replaces the body. Either change backend status to a non-5xx that CDN won't intercept, or handle HTML/JSON parse defensively on the client.", "affected_testIDs": ["phone-error", "send-otp-button"]}
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_twilio_otp.py",
+    "/app/test_reports/pytest/twilio_otp.xml"
+  ],
+  "action_items": [
+    "Frontend: harden src/api.ts request() error path — attempt JSON.parse; if parse fails or status is 5xx, show a generic Spanish message instead of the raw response text. This alone fixes the visible UX bug.",
+    "Backend/infra (optional but recommended): return 400 (or 409) instead of 502 for the invalid-Twilio-auth case, since Cloudflare rewrites origin 5xx bodies and the Spanish JSON detail never reaches clients over the public URL. Alternatively expose a header the frontend can key on."
+  ],
+  "critical_code_review_comments": [
+    "src/api.ts:32-35 propagates raw response text into Error.message — any HTML/CDN payload leaks straight into the UI. This should always be a short, localized string.",
+    "server.py handles Twilio error codes well and never echoes Twilio.msg/SID to clients — verified in tests (no 'twilio', SID, or code 20003 leaks in the origin 502 JSON)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_twilio_otp.py (new)"
+  ],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "75% — test-number happy path + regression pass; non-test error-message UX broken due to CDN + client error handling"},
+  "seed_data_creation": "None. Uses OTP_TEST_NUMBERS from backend/.env and creates SignBridge user rows on first verify (uuid ids, cleanup not required for these tests).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend is fully correct — validate any changes with /app/backend/tests/test_twilio_otp.py. The 502 tests intentionally hit http://0.0.0.0:8001/api because Cloudflare intercepts origin 5xx over the public URL; the TestNonTestNumber.test_public_502_masked_by_cdn test documents that CDN behavior. Do NOT change those tests to use the public URL until either backend returns a non-5xx or Cloudflare is bypassed. Test numbers: +52 5550001111…5550009999 with code 123456 (avoid 5550008888 — the throttle test consumes its bucket; wait 10 min or use another). 5559990000 is throttled per test_credentials.md.",
+  "rca_of_issue": "Cloudflare (server: cloudflare, cf-ray in response) replaces any origin 502 body with its own text/html error page. The backend correctly returns application/json {'detail':'No se pudo enviar el SMS. Inténtalo de nuevo.'} (verified locally at 0.0.0.0:8001) but the public preview host only exposes the CF HTML. Frontend src/api.ts then throws `new Error(text)` with that HTML, and phone.tsx renders it verbatim as phone-error. Mitigation: (a) parse errors defensively on the client and always show a Spanish generic message on 5xx or unparsable bodies, and/or (b) switch backend to return a non-5xx status (400/409/503 may not be rewritten by CF) for Twilio failures so the JSON survives the edge."
+}

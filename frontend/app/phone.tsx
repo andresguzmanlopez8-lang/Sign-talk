@@ -45,10 +45,10 @@ export default function Phone() {
     setError(null);
     setLoading(true);
     try {
-      await api.sendOtp(phone.trim(), country.code);
+      const res = await api.sendOtp(phone.trim(), country.code);
       router.push({
         pathname: "/otp",
-        params: { phone: phone.trim(), code: country.code },
+        params: { phone: phone.trim(), code: country.code, mode: res?.mode ?? "sms" },
       });
     } catch (e: any) {
       setError(e.message);

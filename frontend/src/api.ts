@@ -31,7 +31,17 @@ async function request<T>(
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
+    let message: string | null = null;
+    try {
+      const data = JSON.parse(text);
+      message = typeof data?.detail === "string" ? data.detail : data?.detail ? JSON.stringify(data.detail) : null;
+    } catch {
+      message = null; // non-JSON body (e.g. proxy HTML error page) → never show raw text
+    }
+    if (!message) {
+      message = res.status >= 500 ? "El servicio no está disponible. Inténtalo de nuevo en unos minutos." : `Error ${res.status}`;
+    }
+    throw new Error(message);
   }
   return res.json();
 }
@@ -39,7 +49,7 @@ async function request<T>(
 export const api = {
   base: BASE,
   sendOtp: (phone: string, country_code: string) =>
-    request<{ success: boolean; mock_otp: string }>("/auth/send-otp", {
+    request<{ success: boolean; mode: "test" | "sms" }>("/auth/send-otp", {
       method: "POST",
       body: { phone, country_code },
       auth: false,
