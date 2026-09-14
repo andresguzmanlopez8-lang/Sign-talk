@@ -130,3 +130,9 @@
 
 ## Iteration 8 — main agent
 - Listen button on phrase questions: quiz-listen → POST /api/tts (alloy when UI=es, nova when UI=en) → plays mp3 via expo-audio. Verified in browser: both /api/tts and /api/tts/<key>.mp3 return 200, no console errors.
+
+## Iteration 9 — main agent
+- REAL sign recognition: POST /api/translate/sign-frame {image_base64 (jpeg/png b64, data-URL prefix tolerated), language, previous[]} → {sign, confidence} via gpt-5.4 vision. Verified with ASL B/L/Y photos → B 0.94, L 0.99, Y 0.98 (~1.2s each). POST /api/translate/sign-to-text now takes {signs[]}; 422 when empty; composes letters into words ("H","I","hello" → "Hi hello"). Mock phrases + hint removed.
+- Frontend translator: record-sign-btn is now a toggle (tap start / tap stop); live-sign overlay (live-sign-value, detected-sequence chips) while recording; toast noSignDetected when nothing detected. Camera capture can't run in headless web — test backend + UI render only.
+- Security hardening: strong JWT_SECRET, .env gitignored, verify-otp throttle (429 after 5 failures/10min per phone), audio upload ≤10MB + MIME check (413/415), text length limits (422), generic 502 errors, CORS default without credentials.
+- Image testing rules: /app/image_testing.md

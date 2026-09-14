@@ -12,6 +12,7 @@ import {
   FlatList,
 } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
+import * as ImageManipulator from "expo-image-manipulator";
 import { useAudioPlayer, useAudioRecorder, AudioModule, RecordingPresets, setAudioModeAsync } from "expo-audio";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
@@ -61,6 +62,58 @@ export default function Translator() {
   const [exporting, setExporting] = useState(false);
   const [shareText, setShareText] = useState<string | null>(null);
   const [phrasesOpen, setPhrasesOpen] = useState(false);
+  // Live sign recognition state
+  const cameraRef = useRef<CameraView>(null);
+  const [liveSign, setLiveSign] = useState<{ sign: string | null; confidence: number } | null>(null);
+  const [detectedSigns, setDetectedSigns] = useState<string[]>([]);
+  const detectedRef = useRef<string[]>([]);
+  const recordingRef = useRef(false);
+  const frameBusyRef = useRef(false);
+  const frameTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const FRAME_INTERVAL_MS = 1500;
+  const MIN_CONFIDENCE = 0.5;
+
+  /** Capture one downscaled frame and ask the vision model which sign is shown. */
+  const analyzeFrame = async () => {
+    if (!recordingRef.current || frameBusyRef.current || !cameraRef.current) return;
+    frameBusyRef.current = true;
+    try {
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.4, skipProcessing: true, base64: Platform.OS === "web" });
+      if (!photo) return;
+      let base64 = photo.base64 ?? null;
+      if (Platform.OS !== "web") {
+        const small = await ImageManipulator.manipulateAsync(photo.uri, [{ resize: { width: 512 } }], {
+          compress: 0.6,
+          format: ImageManipulator.SaveFormat.JPEG,
+          base64: true,
+        });
+        base64 = small.base64 ?? null;
+      }
+      if (!base64 || !recordingRef.current) return;
+      const res = await api.signFrame(base64, lang, detectedRef.current);
+      if (!recordingRef.current) return;
+      setLiveSign(res);
+      const last = detectedRef.current[detectedRef.current.length - 1];
+      if (res.sign && res.confidence >= MIN_CONFIDENCE && res.sign.toLowerCase() !== last?.toLowerCase()) {
+        detectedRef.current = [...detectedRef.current, res.sign];
+        setDetectedSigns(detectedRef.current);
+        Haptics.selectionAsync().catch(() => {});
+      }
+    } catch (e) {
+      console.warn("frame", e);
+    } finally {
+      frameBusyRef.current = false;
+    }
+  };
+
+  const stopFrameLoop = () => {
+    recordingRef.current = false;
+    if (frameTimerRef.current) clearInterval(frameTimerRef.current);
+    frameTimerRef.current = null;
+  };
+
+  useEffect(() => stopFrameLoop, []);
   const scrollRef = useRef<FlatList<Msg>>(null);
 
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
@@ -172,23 +225,37 @@ export default function Translator() {
       return;
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    detectedRef.current = [];
+    setDetectedSigns([]);
+    setLiveSign(null);
+    recordingRef.current = true;
     setRecordingSign(true);
+    analyzeFrame();
+    frameTimerRef.current = setInterval(analyzeFrame, FRAME_INTERVAL_MS);
   };
 
   const stopRecordSign = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    stopFrameLoop();
     setRecordingSign(false);
+    setLiveSign(null);
+    const signs = detectedRef.current;
+    if (signs.length === 0) {
+      showToast(t.noSignDetected);
+      return;
+    }
     setLoading(true);
     try {
-      const msg = await api.signToText(lang);
+      const msg = await api.signToText(lang, signs);
       setMessages((prev) => [...prev, msg]);
-      // TTS
+      setDetectedSigns([]);
       try {
         const tts = await api.tts(msg.translated_text, lang === "es" ? "nova" : "alloy");
         playAudio(`${api.base}${tts.url}`);
       } catch {}
     } catch (e) {
       console.warn(e);
+      showToast(t.recognitionError);
     } finally {
       setLoading(false);
       scrollToEnd();
@@ -373,7 +440,7 @@ export default function Translator() {
           {mode === "sign" ? (
             camPerm?.granted ? (
               <View style={styles.cameraWrap}>
-                <CameraView style={styles.camera} facing="front" testID="camera-view" />
+                <CameraView ref={cameraRef} style={styles.camera} facing="front" testID="camera-view" />
                 <LinearGradient
                   colors={["transparent", "rgba(13,14,18,0.9)"]}
                   style={styles.scrim}
@@ -383,6 +450,29 @@ export default function Translator() {
                   <View style={styles.recBadge}>
                     <View style={styles.recDot} />
                     <Text style={styles.recText}>{t.recording}</Text>
+                  </View>
+                )}
+                {recordingSign && (
+                  <View style={styles.liveBox} testID="live-sign">
+                    <Text style={styles.liveLabel}>
+                      {liveSign?.sign ? `✋ ${t.detected}` : t.detecting}
+                    </Text>
+                    {liveSign?.sign ? (
+                      <Text style={styles.liveSign} testID="live-sign-value">
+                        {liveSign.sign} · {Math.round(liveSign.confidence * 100)}%
+                      </Text>
+                    ) : (
+                      <ActivityIndicator color={colors.brandPrimary} size="small" />
+                    )}
+                    {detectedSigns.length > 0 && (
+                      <View style={styles.seqRow} testID="detected-sequence">
+                        {detectedSigns.slice(-8).map((s, i) => (
+                          <View key={`${s}-${i}`} style={styles.seqChip}>
+                            <Text style={styles.seqText}>{s}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
                   </View>
                 )}
               </View>
@@ -492,20 +582,24 @@ export default function Translator() {
             )}
           </ScrollView>
           {mode === "sign" ? (
-            <Pressable
-              style={[styles.recordBtn, recordingSign && styles.recordBtnActive]}
-              onPressIn={startRecordSign}
-              onPressOut={recordingSign ? stopRecordSign : undefined}
-              testID="record-sign-btn"
-            >
-              {loading ? (
-                <ActivityIndicator color={colors.onBrandPrimary} />
-              ) : (
-                <Text style={styles.recordBtnText}>
-                  {recordingSign ? "⏹" : "🎥"}
-                </Text>
-              )}
-            </Pressable>
+            <View style={styles.signControls}>
+              <Pressable
+                style={[styles.recordBtn, recordingSign && styles.recordBtnActive]}
+                onPress={recordingSign ? stopRecordSign : startRecordSign}
+                disabled={loading}
+                testID="record-sign-btn"
+                accessibilityLabel={recordingSign ? t.tapToStop : t.tapToRecord}
+              >
+                {loading ? (
+                  <ActivityIndicator color={colors.onBrandPrimary} />
+                ) : (
+                  <Text style={styles.recordBtnText}>
+                    {recordingSign ? "⏹" : "🎥"}
+                  </Text>
+                )}
+              </Pressable>
+              <Text style={styles.recordHint}>{recordingSign ? t.tapToStop : t.tapToRecord}</Text>
+            </View>
           ) : (
             <View style={styles.voiceRow}>
               <TextInput
@@ -664,6 +758,14 @@ const styles = StyleSheet.create({
   },
   recordBtnActive: { backgroundColor: colors.error },
   recordBtnText: { fontSize: 32 },
+  signControls: { alignItems: "center", gap: spacing.xs },
+  recordHint: { color: colors.onSurfaceTertiary, fontSize: 11, fontWeight: "600" },
+  liveBox: { position: "absolute", left: spacing.md, right: spacing.md, bottom: spacing.md, backgroundColor: "rgba(13,14,18,0.8)", borderRadius: radius.md, padding: spacing.sm, gap: 4, borderWidth: 1, borderColor: colors.border },
+  liveLabel: { color: colors.onSurfaceTertiary, fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: 1 },
+  liveSign: { color: colors.onSurface, fontSize: 20, fontWeight: "800" },
+  seqRow: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 2 },
+  seqChip: { backgroundColor: colors.brandPrimary, paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: radius.sm },
+  seqText: { color: colors.onBrandPrimary, fontWeight: "800", fontSize: 12 },
   voiceRow: { flexDirection: "row", gap: spacing.sm, alignItems: "center" },
   textInput: {
     flex: 1,

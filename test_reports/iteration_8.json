@@ -1,0 +1,26 @@
+{
+  "summary": "Iteration 8 verifies the SignBridge bugfix (no mock text in sign-to-text) + real vision recognition + security hardening. BACKEND (23/23 pytest tests pass in /app/backend/tests/test_iter8_bugfix.py). (1) SIGN-TO-TEXT DETERMINISM: POST /api/translate/sign-to-text {language:'es', signs:[]} → 422 ('No signs detected'); {signs:['H','O','L','A']} → translated_text='Hola', original_text='H O L A'; {signs:['hello','friend'],lang:'en'} → 'Hello friend'; three consecutive calls with the same signs returned identical text ('Hola' each time — deterministic, no random phrases). The strings 'Hola, ¿cómo estás?' and 'Cómo estás hoy' NEVER appear in the response. Random letters ['X','Y','Z'] → 'Xyz' (no mock leak). Unknown legacy field `hint` is accepted (ignored by pydantic). (2) VISION /api/translate/sign-frame: real ASL JPEGs at /tmp/asl_{b,l,y}.jpg (base64) → {sign:'B',conf:0.95}, {sign:'L',conf:0.99}, {sign:'Y',conf:0.98} (all within 15s each, all with confidence≥0.5). data:image/jpeg;base64,... prefix is accepted. image_base64<100 chars → 422. Missing auth → 401. Non-hand style photo → 200 (nullable sign). (3) SECURITY: 5 wrong OTP attempts on the same phone → 400 each; 6th → 429 'Too many attempts. Try again later.' A different phone with correct OTP still logs in (200 + token). text-to-sign with 600-char text → 422; favorites with 400-char text → 422; voice-to-text with content-type text/plain fake 200-byte file → 415; voice-to-text with content-type audio/wav and 10MB+1024-byte body → 413. CORS preflight OPTIONS with Origin header returns 200 + Access-Control-Allow-Origin header. (4) REGRESSION: text-to-sign 'Hola mundo' → sign_sequence starts ['H','O','L','A']; POST /favorites works; GET /phrases?language=es returns items+categories. FRONTEND (Chromium mobile 390x844): login 5550001111 → OTP 123456 → Traductor tab. record-sign-btn visible with hint 'Toca para grabar señas'. Camera permission card 'Cámara / Conceder acceso' displayed (headless has no camera; testID=request-camera present). Existing 'Bly hello friend' bubble present with italic original sequence 'B L Y hello friend' rendered above translated 'Bly hello friend'. Switch mode-voice ↔ mode-sign works: in voice mode text-input+send-btn+record-voice-btn all render correctly; typing 'Prueba' + tapping send-btn produced a new outgoing message bubble with sign sequence preview '🗣️→👐 Prueba'. favorites-row + open-phrases chip render. No JS pageerrors, no red screens, no console errors. Regression flows all working.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter8_bugfix.py",
+    "/app/test_reports/pytest/iter8.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is 977 lines — approaching the 700-line soft cap. Consider splitting into routers (auth, translate, learn, favorites, tts, phrases) for maintainability. Not blocking.",
+    "OTP throttle is in-process (dict). Fine for single replica; will not survive restarts or work across pods. Note this if scaling out."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "None. Test users were created ad-hoc via mock OTP.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Bugfix confirmed: sign-to-text is deterministic and returns 422 on empty signs. Vision endpoint truly recognizes ASL letters B/L/Y with high confidence via EMERGENT_LLM_KEY. All security hardening (OTP throttle, text/favorite length caps, audio content-type/size caps) verified. Live camera capture cannot be tested in headless Chromium — verified UI/permission card path only. Use /app/backend/tests/test_iter8_bugfix.py as regression suite.",
+  "rca_of_issue": "Root cause of the reported bug (fixed by main agent): the previous /translate/sign-to-text endpoint returned pre-canned/mock Spanish phrases (e.g., 'Hola, ¿cómo estás?') regardless of input. The fix replaces that with the deterministic _compose_sentence() helper which joins letters into a spelled word (capitalized) and joins recognized words with spaces. Empty inputs now raise HTTP 422 instead of returning a mock phrase. Verified across 3 identical repeat calls and multiple sign combinations."
+}

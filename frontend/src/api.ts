@@ -62,8 +62,13 @@ export const api = {
     if (opts.letter) qs.set("letter", opts.letter);
     return request<any[]>(`/dictionary?${qs.toString()}`);
   },
-  signToText: (language: "es" | "en", hint?: string) =>
-    request<any>("/translate/sign-to-text", { method: "POST", body: { language, hint } }),
+  signToText: (language: "es" | "en", signs: string[]) =>
+    request<any>("/translate/sign-to-text", { method: "POST", body: { language, signs } }),
+  signFrame: (image_base64: string, language: "es" | "en", previous: string[]) =>
+    request<{ sign: string | null; confidence: number }>("/translate/sign-frame", {
+      method: "POST",
+      body: { image_base64, language, previous },
+    }),
   textToSign: (text: string, language: "es" | "en") =>
     request<any>("/translate/text-to-sign", { method: "POST", body: { text, language } }),
   voiceToText: async (audioUri: string, language: "es" | "en") => {

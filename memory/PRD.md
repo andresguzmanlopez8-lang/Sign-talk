@@ -12,7 +12,7 @@ Mobile app for bidirectional translation between Sign Language (LSM/ASL) and Spo
 2. **Onboarding**: Name, profile photo, preferred language (ES/EN).
 3. **Permissions**: Camera, Mic, Contacts with fallback screen for denied perms.
 4. **Translator tab**:
-   - Sign→Text mode: Front camera view + big record button. Uses GPT to simulate sign recognition. TTS plays translated audio.
+   - Sign→Text mode (REAL recognition): tap 🎥 to start; every 1.5 s a downscaled frame (512px JPEG, expo-image-manipulator on native / base64 on web) is sent to `POST /translate/sign-frame` → OpenAI gpt-5.4 vision (emergentintegrations LlmChat + ImageContent) returns `{sign, confidence}`. Live overlay shows the detected sign + confidence and the running sequence (chips). Tap ⏹ to stop → `POST /translate/sign-to-text {signs}` composes the sentence deterministically (consecutive letters spell a word) and saves it; TTS plays it. No signs → toast 'No se detectó ninguna seña' and nothing is saved. All mock phrases removed.
    - Text/Voice→Sign mode: Text field or mic. Whisper transcribes voice. Result animated as ASL letter GIFs (avatar).
    - Chat history with WhatsApp-style bubbles. Language toggle LSM↔ASL.
 5. **Dictionary tab**: 129 seeded entries (A-Z LSM + A-Z ASL + 38 everyday words each; seed upserts missing ids on startup). Search, A-Z filter chips, letter/word filter, detail modal with GIF + description.
@@ -34,7 +34,7 @@ Mobile app for bidirectional translation between Sign Language (LSM/ASL) and Spo
 ## Backend Endpoints (/api)
 - `POST /auth/send-otp`, `POST /auth/verify-otp`, `GET /auth/me`, `POST /auth/onboard`, `PATCH /auth/profile`
 - `GET /dictionary?language=&q=&letter=`, `GET /dictionary/{id}`
-- `POST /translate/sign-to-text`, `POST /translate/text-to-sign`, `POST /translate/voice-to-text` (multipart)
+- `POST /translate/sign-frame {image_base64, language, previous[]}` → {sign|null, confidence}; `POST /translate/sign-to-text {language, signs[]}` (422 if empty), `POST /translate/text-to-sign` (text ≤500), `POST /translate/voice-to-text` (multipart, ≤10 MB, audio MIME only)
 - `GET /messages`, `DELETE /messages`
 - `POST /tts` (returns URL), `GET /tts/{key}.mp3`
 - `GET /favorites?language=`, `POST /favorites {text, language}` (dedup), `DELETE /favorites/{id}`
@@ -44,6 +44,14 @@ Mobile app for bidirectional translation between Sign Language (LSM/ASL) and Spo
 ## Backlog
 - Contacts integration to share translated messages (P1)
 - Real SMS OTP provider, real CV sign recognition, 3D avatar (P2)
+
+## Security hardening (audit iteration)
+- Strong random JWT_SECRET; `.env` files gitignored.
+- verify-otp throttled: 5 failed attempts / 10 min per phone → 429 (in-memory).
+- Upload limits (10 MB, audio MIME), Pydantic max_length on favorites (300), text-to-sign (500), tts (4000), sign-frame (~3 MB b64).
+- Generic 502 messages for STT/TTS/vision failures (no exception text leaked).
+- CORS: `CORS_ORIGINS` env (comma-separated) enables explicit origins + credentials; default `*` without credentials.
+- Remaining (deliberate demo): mock OTP 123456 is still returned by send-otp — replace with SMS provider before production.
 
 ## Env
 - `EMERGENT_LLM_KEY` for LLM/TTS/STT

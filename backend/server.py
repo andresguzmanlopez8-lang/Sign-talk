@@ -7,6 +7,9 @@ import os
 import logging
 import hashlib
 import re
+import json
+import time
+from collections import defaultdict
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional, Literal
@@ -15,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 import jwt
 
 from emergentintegrations.llm.openai import OpenAITextToSpeech, OpenAISpeechToText
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -29,6 +32,24 @@ JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALG = "HS256"
 
 MOCK_OTP = "123456"
+
+# Brute-force protection for OTP verification: max attempts per phone within a window (in-memory).
+OTP_MAX_ATTEMPTS = 5
+OTP_WINDOW_SECONDS = 600
+_otp_attempts: dict = defaultdict(list)
+
+def _otp_throttle(key: str) -> None:
+    now = time.time()
+    attempts = [t for t in _otp_attempts[key] if now - t < OTP_WINDOW_SECONDS]
+    _otp_attempts[key] = attempts
+    if len(attempts) >= OTP_MAX_ATTEMPTS:
+        raise HTTPException(429, "Too many attempts. Try again later.")
+
+def _otp_record_failure(key: str) -> None:
+    _otp_attempts[key].append(time.time())
+
+MAX_AUDIO_BYTES = 10 * 1024 * 1024
+ALLOWED_AUDIO_TYPES = {"audio/m4a", "audio/x-m4a", "audio/mp4", "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/webm", "audio/ogg", "audio/aac", "application/octet-stream"}
 
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
@@ -78,16 +99,21 @@ class Message(BaseModel):
 
 class SignToTextReq(BaseModel):
     language: Literal["es", "en"] = "es"
-    # In real app, video is uploaded; MVP simulates via a hint or random from set
-    hint: Optional[str] = None
+    # Sequence of signs recognized frame-by-frame by the vision model (letters and/or words)
+    signs: List[str] = Field(default_factory=list, max_length=120)
+
+class SignFrameReq(BaseModel):
+    image_base64: str = Field(min_length=100, max_length=4_000_000)  # ~3 MB of base64
+    language: Literal["es", "en"] = "es"
+    previous: List[str] = Field(default_factory=list, max_length=20)
 
 class TextToSignReq(BaseModel):
-    text: str
+    text: str = Field(min_length=1, max_length=500)
     language: Literal["es", "en"] = "es"
 
 class TtsReq(BaseModel):
-    text: str
-    voice: str = "nova"
+    text: str = Field(min_length=1, max_length=4000)
+    voice: Literal["nova", "alloy", "echo", "fable", "onyx", "shimmer"] = "nova"
 
 # ------------------- AUTH HELPERS -------------------
 
@@ -120,9 +146,12 @@ async def send_otp(req: SendOtpReq):
 
 @api_router.post("/auth/verify-otp")
 async def verify_otp(req: VerifyOtpReq):
-    if req.otp != MOCK_OTP:
-        raise HTTPException(400, "Invalid OTP")
     full_phone = f"{req.country_code}{req.phone}"
+    _otp_throttle(full_phone)
+    if req.otp != MOCK_OTP:
+        _otp_record_failure(full_phone)
+        raise HTTPException(400, "Invalid OTP")
+    _otp_attempts.pop(full_phone, None)
     user = await db.users.find_one({"phone": full_phone}, {"_id": 0})
     if not user:
         u = User(phone=full_phone, country_code=req.country_code)
@@ -386,58 +415,94 @@ async def get_dictionary_entry(entry_id: str):
 
 # ------------------- TRANSLATION -------------------
 
-# Vocabulary pool for mock sign-to-text (realistic phrases)
-MOCK_SIGN_PHRASES = {
-    "en": [
-        "Hello, how are you?",
-        "Nice to meet you.",
-        "Thank you very much.",
-        "I need help please.",
-        "What is your name?",
-        "I am learning sign language.",
-        "Where is the bathroom?",
-        "Can you help me?",
-        "I love you.",
-        "See you tomorrow.",
-    ],
-    "es": [
-        "Hola, ¿cómo estás?",
-        "Mucho gusto en conocerte.",
-        "Muchas gracias.",
-        "Necesito ayuda por favor.",
-        "¿Cuál es tu nombre?",
-        "Estoy aprendiendo lengua de señas.",
-        "¿Dónde está el baño?",
-        "¿Me puedes ayudar?",
-        "Te quiero.",
-        "Hasta mañana.",
-    ],
-}
+VISION_MODEL = ("openai", "gpt-5.4")
 
-async def _llm_generate(prompt: str, language: str) -> str:
-    """Use GPT to generate/refine a translation."""
+def _sign_system_prompt(language: str) -> str:
+    lang_name = "Mexican Sign Language (LSM)" if language == "es" else "American Sign Language (ASL)"
+    text_lang = "Spanish" if language == "es" else "English"
+    return (
+        f"You are a {lang_name} recognition model. You receive one camera frame of a person signing. "
+        "Identify the single sign being performed: a fingerspelled letter (A-Z, plus Ñ for LSM) or a common word "
+        f"(in {text_lang}, e.g. hello, thanks, yes, no, please, sorry, love, friend, help, water, eat, family, house). "
+        "If no hand or no clear sign is visible, return null. Never guess when the hands are not visible. "
+        'Respond ONLY with compact JSON: {"sign": "<letter or word or null>", "confidence": <0.0-1.0>}'
+    )
+
+def _parse_sign_json(raw: str) -> dict:
+    raw = raw.strip()
+    raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw)
     try:
-        session_id = str(uuid.uuid4())
-        system = (
-            "You simulate a sign language recognition model. Given a hint, produce a natural, short sentence "
-            f"in {'Spanish' if language == 'es' else 'English'} (max 12 words). Return only the sentence."
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        m = re.search(r"\{.*\}", raw, re.S)
+        data = json.loads(m.group(0)) if m else {}
+    sign = data.get("sign")
+    if isinstance(sign, str):
+        sign = sign.strip()
+        if not sign or sign.lower() in ("null", "none", "unknown"):
+            sign = None
+    else:
+        sign = None
+    try:
+        confidence = max(0.0, min(1.0, float(data.get("confidence", 0))))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return {"sign": sign, "confidence": confidence}
+
+def _strip_data_url(b64: str) -> str:
+    return b64.split(",", 1)[1] if b64.startswith("data:") else b64
+
+@api_router.post("/translate/sign-frame")
+async def sign_frame(req: SignFrameReq, user=Depends(get_current_user)):
+    """Recognize the sign in a single camera frame using the vision model."""
+    prev = ", ".join(req.previous[-5:]) or "none"
+    prompt = f"Previously detected signs in this sequence: {prev}. Identify the sign in this frame."
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"sign-{user['id']}-{uuid.uuid4()}",
+            system_message=_sign_system_prompt(req.language),
+        ).with_model(*VISION_MODEL)
+        raw = await chat.send_message(
+            UserMessage(text=prompt, file_contents=[ImageContent(image_base64=_strip_data_url(req.image_base64))])
         )
-        chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=session_id, system_message=system).with_model("openai", "gpt-4o-mini")
-        resp = await chat.send_message(UserMessage(text=prompt))
-        return resp.strip().strip('"')
     except Exception as e:
-        logging.warning(f"LLM error: {e}")
-        import random
-        return random.choice(MOCK_SIGN_PHRASES[language])
+        logging.warning(f"Vision model error: {e}")
+        raise HTTPException(502, "Sign recognition service unavailable")
+    result = _parse_sign_json(raw)
+    if result["sign"] and len(result["sign"]) == 1:
+        result["sign"] = result["sign"].upper()
+    return result
+
+def _compose_sentence(signs: List[str], language: str) -> str:
+    """Join recognized signs: consecutive single letters spell a word, words are separated by spaces."""
+    words, spelled = [], ""
+    for s in signs:
+        s = s.strip()
+        if not s:
+            continue
+        if len(s) == 1:
+            spelled += s.upper()
+        else:
+            if spelled:
+                words.append(spelled.capitalize())
+                spelled = ""
+            words.append(s.lower())
+    if spelled:
+        words.append(spelled.capitalize())
+    sentence = " ".join(words)
+    return sentence[:1].upper() + sentence[1:] if sentence else ""
 
 @api_router.post("/translate/sign-to-text")
 async def sign_to_text(req: SignToTextReq, user=Depends(get_current_user)):
-    prompt = req.hint or "The user signed a common greeting or question."
-    text = await _llm_generate(f"Simulate sign recognition. Context: {prompt}", req.language)
+    text = _compose_sentence(req.signs, req.language)
+    if not text:
+        raise HTTPException(422, "No signs detected")
     msg = Message(
         user_id=user["id"],
         direction="sign_to_text",
         language=req.language,
+        original_text=" ".join(req.signs),
         translated_text=text,
     )
     await db.messages.insert_one(msg.model_dump())
@@ -464,8 +529,14 @@ async def voice_to_text(
     language: str = Form("es"),
     user=Depends(get_current_user),
 ):
+    if audio.content_type and audio.content_type.split(";")[0] not in ALLOWED_AUDIO_TYPES:
+        raise HTTPException(415, "Unsupported audio type")
+    audio_bytes = await audio.read(MAX_AUDIO_BYTES + 1)
+    if len(audio_bytes) > MAX_AUDIO_BYTES:
+        raise HTTPException(413, "Audio file too large (max 10 MB)")
+    if len(audio_bytes) < 100:
+        raise HTTPException(400, "Audio file is empty")
     try:
-        audio_bytes = await audio.read()
         stt = OpenAISpeechToText(api_key=EMERGENT_LLM_KEY)
         text = await stt.transcribe_audio(
             audio_bytes=audio_bytes,
@@ -474,7 +545,7 @@ async def voice_to_text(
         )
     except Exception as e:
         logging.warning(f"STT error: {e}")
-        raise HTTPException(500, f"Transcription failed: {e}")
+        raise HTTPException(502, "Transcription service unavailable")
 
     seq = [c.upper() for c in text if c.isalpha()][:60]
     msg = Message(
@@ -501,11 +572,11 @@ async def clear_messages(user=Depends(get_current_user)):
 # ------------------- FAVORITES -------------------
 
 class FavoriteReq(BaseModel):
-    text: str
+    text: str = Field(min_length=1, max_length=300)
     language: Literal["es", "en"] = "es"
 
 class FavoriteUpdateReq(BaseModel):
-    text: str
+    text: str = Field(min_length=1, max_length=300)
 
 class FavoriteReorderReq(BaseModel):
     ids: List[str]
@@ -862,7 +933,7 @@ async def create_tts(req: TtsReq, user=Depends(get_current_user)):
             audio_bytes = await tts.generate_speech(text=clean, model="tts-1", voice=req.voice)
         except Exception as e:
             logging.warning(f"TTS error: {e}")
-            raise HTTPException(500, f"TTS failed: {e}")
+            raise HTTPException(502, "Speech service unavailable")
         await db.tts_cache.insert_one({"key": key, "audio": audio_bytes})
     backend_url = os.environ.get("EXPO_PACKAGER_HOSTNAME", "")
     return {"url": f"/api/tts/{key}.mp3"}
@@ -886,10 +957,13 @@ async def root():
 
 app.include_router(api_router)
 
+# Bearer-token auth (no cookies), so credentials are not needed. Set CORS_ORIGINS (comma-separated)
+# to restrict origins explicitly in production.
+_cors_origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=["*"],
+    allow_credentials=bool(_cors_origins),
+    allow_origins=_cors_origins or ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
