@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, Pressable, Modal, TextInput, FlatList, Activity
 import * as Contacts from "expo-contacts";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
+import { api } from "@/src/api";
 import { colors, spacing, radius } from "@/src/theme";
 import { useLang } from "@/src/lang";
 
@@ -37,6 +38,19 @@ export default function ContactPicker({ visible, text, onClose }: Props) {
   const [q, setQ] = useState("");
   const [manualPhone, setManualPhone] = useState("");
   const [selected, setSelected] = useState<Contact | null>(null);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
+
+  /** Opening a profile triggers the backend Contacts Manager (auto-save on first access). */
+  const openProfile = async (c: Contact) => {
+    setSelected(c);
+    setSyncMsg(null);
+    try {
+      const res = await api.viewContact({ profileId: c.id, displayName: c.name, phone: c.phone });
+      setSyncMsg(res.created ? t.contactSynced : t.contactAlreadySynced);
+    } catch (e) {
+      console.warn("contacts manager", e);
+    }
+  };
 
   useEffect(() => {
     if (!visible) return;
@@ -111,6 +125,11 @@ export default function ContactPicker({ visible, text, onClose }: Props) {
       return (
         <View style={styles.section} testID="send-options">
           <Text style={styles.sectionTitle}>{t.sendTo}</Text>
+          {syncMsg && (
+            <View style={styles.syncBanner} testID="contact-sync-banner">
+              <Text style={styles.syncText}>✅ {syncMsg}</Text>
+            </View>
+          )}
           <View style={styles.contactRow}>
             <View style={styles.avatar}><Text style={styles.avatarText}>{selected.name[0]?.toUpperCase()}</Text></View>
             <View style={{ flex: 1 }}>
@@ -179,7 +198,7 @@ export default function ContactPicker({ visible, text, onClose }: Props) {
             keyboardShouldPersistTaps="handled"
             contentContainerStyle={{ paddingBottom: spacing.lg }}
             renderItem={({ item }) => (
-              <Pressable style={styles.contactRow} onPress={() => setSelected(item)} testID={`contact-${item.id}`}>
+              <Pressable style={styles.contactRow} onPress={() => openProfile(item)} testID={`contact-${item.id}`}>
                 <View style={styles.avatar}><Text style={styles.avatarText}>{item.name[0]?.toUpperCase()}</Text></View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.contactName}>{item.name}</Text>
@@ -212,7 +231,7 @@ export default function ContactPicker({ visible, text, onClose }: Props) {
         <Pressable
           style={[styles.primaryBtn, styles.manualBtn, digitsOnly(manualPhone).length < 7 && styles.disabled]}
           disabled={digitsOnly(manualPhone).length < 7}
-          onPress={() => setSelected({ id: "manual", name: manualPhone, phone: manualPhone })}
+          onPress={() => openProfile({ id: `manual-${digitsOnly(manualPhone)}`, name: manualPhone, phone: manualPhone })}
           testID="manual-continue"
         >
           <Text style={styles.primaryBtnText}>➤</Text>
@@ -241,6 +260,8 @@ export default function ContactPicker({ visible, text, onClose }: Props) {
 
 const styles = StyleSheet.create({
   bg: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "flex-end" },
+  syncBanner: { backgroundColor: colors.brandTertiary, borderRadius: radius.md, padding: spacing.sm, borderWidth: 1, borderColor: colors.success },
+  syncText: { color: colors.success, fontWeight: "800", fontSize: 13 },
   sheet: { backgroundColor: colors.surface, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, maxHeight: "85%", paddingHorizontal: spacing.lg },
   sheetHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: spacing.md },
   sheetTitle: { color: colors.onSurface, fontSize: 18, fontWeight: "800" },

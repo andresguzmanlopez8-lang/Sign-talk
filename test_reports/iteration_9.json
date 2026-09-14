@@ -1,0 +1,10 @@
+{
+  "iteration": 9,
+  "feature": "UserContacts collection + Contacts Manager automation + Preview panel",
+  "backend": {"tests": "backend/tests/test_contacts_manager.py", "passed": 10, "failed": 0,
+    "covers": ["first view creates (created:true, message, isSavedLocally:true, no owner/_id leak)", "second view refreshes lastSyncDate (created:false)", "dedupe by displayName+phone", "sort lastSyncDate desc", "delete then 404", "422 empty displayName", "401 no auth", "owner scoping", "Mongo collection literally 'UserContacts' with Date/bool fields"]},
+  "frontend": {"method": "playwright screenshot_tool", "passed": [
+    "Profile → Contactos sincronizados: simulate-profile-view → '✅ Contacto sincronizado automáticamente' + Andy row with 'Guardado localmente'",
+    "ContactPicker manual number: first → 'Contacto sincronizado automáticamente', second → 'Contacto ya sincronizado'"]},
+  "status": "pass"
+}

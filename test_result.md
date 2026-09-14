@@ -136,3 +136,7 @@
 - Frontend translator: record-sign-btn is now a toggle (tap start / tap stop); live-sign overlay (live-sign-value, detected-sequence chips) while recording; toast noSignDetected when nothing detected. Camera capture can't run in headless web — test backend + UI render only.
 - Security hardening: strong JWT_SECRET, .env gitignored, verify-otp throttle (429 after 5 failures/10min per phone), audio upload ≤10MB + MIME check (413/415), text length limits (422), generic 502 errors, CORS default without credentials.
 - Image testing rules: /app/image_testing.md
+
+## Iteration 10 — main agent
+- UserContacts collection + Contacts Manager: POST /api/contacts/view (first access → created:true, message "Contacto sincronizado automáticamente", isSavedLocally true; repeat → created:false, lastSyncDate refreshed), GET /api/contacts (owner-scoped), DELETE /api/contacts/{id}.
+- UI: Profile → settings-contacts → /contacts screen: preview-panel, simulate-profile-view (Andy), sync-confirmation banner, contact-row-<id>/contact-name-<id>/contact-delete-<id>, contacts-back. ContactPicker: selecting a contact/manual number calls contacts/view and shows contact-sync-banner in send-options.

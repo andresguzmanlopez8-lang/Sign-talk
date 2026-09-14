@@ -101,4 +101,8 @@ export const api = {
     request<any>("/learn/review/complete", { method: "POST", body: payload }),
   achievements: (language: "es" | "en") => request<any>(`/learn/achievements?language=${language}`),
   phrases: (language: "es" | "en") => request<any>(`/phrases?language=${language}`, { auth: false }),
+  viewContact: (payload: { profileId?: string; displayName: string; profileImageUrl?: string | null; phone?: string | null }) =>
+    request<{ contact: any; created: boolean; message: string | null }>("/contacts/view", { method: "POST", body: payload }),
+  contacts: () => request<any[]>("/contacts"),
+  deleteContact: (id: string) => request<any>(`/contacts/${id}`, { method: "DELETE" }),
 };

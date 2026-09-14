@@ -37,6 +37,7 @@ Mobile app for bidirectional translation between Sign Language (LSM/ASL) and Spo
 - `POST /translate/sign-frame {image_base64, language, previous[]}` → {sign|null, confidence}; `POST /translate/sign-to-text {language, signs[]}` (422 if empty), `POST /translate/text-to-sign` (text ≤500), `POST /translate/voice-to-text` (multipart, ≤10 MB, audio MIME only)
 - `GET /messages`, `DELETE /messages`
 - `POST /tts` (returns URL), `GET /tts/{key}.mp3`
+- `POST /contacts/view {profileId?, displayName, profileImageUrl?, phone?}` → {contact, created, message}; `GET /contacts`; `DELETE /contacts/{id}`
 - `GET /favorites?language=`, `POST /favorites {text, language}` (dedup), `DELETE /favorites/{id}`
 - `GET /learn/today?language=` → {items:[{entry, options[4]}], progress}, `POST /learn/complete {language, correct_ids, wrong_ids, score, total}` → progress + counted, `GET /learn/progress`
 - `GET /learn/review?language=` → {items (only weak_ids, ≤10), progress}, `POST /learn/review/complete {language, correct_ids, wrong_ids, score, total}` → progress + mastered (no streak change)
@@ -44,6 +45,8 @@ Mobile app for bidirectional translation between Sign Language (LSM/ASL) and Spo
 ## Backlog
 - Contacts integration to share translated messages (P1)
 - Real SMS OTP provider, real CV sign recognition, 3D avatar (P2)
+
+20. **UserContacts + Contacts Manager**: Mongo collection `UserContacts` {id, owner_user_id, profileId?, displayName, profileImageUrl?, phone?, lastSyncDate, isSavedLocally, createdAt} (indexes on owner+profileId, owner+lastSyncDate). Backend automation `contacts_manager_on_profile_view` runs on `POST /contacts/view` (called whenever a profile is accessed: ContactPicker selection or the Preview simulation): first access → insert with isSavedLocally=true and return message "Contacto sincronizado automáticamente" (created=true); later accesses → refresh lastSyncDate (created=false). `GET /contacts`, `DELETE /contacts/{id}`. UI: Profile → "Contactos sincronizados" (`/contacts`, app/contacts.tsx) with a PREVIEW panel that simulates viewing the "Andy" profile and shows the confirmation banner + list of synced contacts; ContactPicker shows the same banner when a recipient is opened.
 
 ## Security hardening (audit iteration)
 - Strong random JWT_SECRET; `.env` files gitignored.

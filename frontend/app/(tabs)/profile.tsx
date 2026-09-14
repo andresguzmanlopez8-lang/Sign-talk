@@ -133,6 +133,11 @@ export default function Profile() {
           <Text style={styles.settingLabel}>{t.manageFavorites}</Text>
           <Text style={styles.chev}>›</Text>
         </Pressable>
+        <Pressable style={styles.settingRow} onPress={() => router.push("/contacts")} testID="settings-contacts">
+          <Text style={styles.settingIcon}>👥</Text>
+          <Text style={styles.settingLabel}>{t.syncedContacts}</Text>
+          <Text style={styles.chev}>›</Text>
+        </Pressable>
         <Pressable style={styles.settingRow} onPress={() => router.push("/permissions")} testID="settings-permissions">
           <Text style={styles.settingIcon}>🔐</Text>
           <Text style={styles.settingLabel}>{t.permissions}</Text>

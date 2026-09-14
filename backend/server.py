@@ -393,6 +393,9 @@ async def seed():
     ops = [UpdateOne({"id": e["id"]}, {"$set": e}, upsert=True) for e in entries]
     res = await db.dictionary.bulk_write(ops)
     logging.info(f"Dictionary seed: {res.upserted_count} inserted, {res.modified_count} updated")
+    # UserContacts collection (Contacts Manager) — ensure it exists with its indexes
+    await db.UserContacts.create_index([("owner_user_id", 1), ("profileId", 1)])
+    await db.UserContacts.create_index([("owner_user_id", 1), ("lastSyncDate", -1)])
 
 @api_router.get("/dictionary")
 async def get_dictionary(language: Optional[str] = None, q: Optional[str] = None, letter: Optional[str] = None):
@@ -911,6 +914,65 @@ async def get_phrases(language: Literal["es", "en"] = "es"):
     return {"items": items, "categories": [
         {"id": k, "label": v[language], "emoji": v["emoji"]} for k, v in CATEGORY_LABELS.items()
     ]}
+
+# ------------------- USER CONTACTS (Contacts Manager) -------------------
+
+class ContactViewReq(BaseModel):
+    """Payload sent whenever a profile (e.g. a contact picked to share a message) is accessed."""
+    profileId: Optional[str] = Field(default=None, max_length=120)
+    displayName: str = Field(min_length=1, max_length=120)
+    profileImageUrl: Optional[str] = Field(default=None, max_length=2000)
+    phone: Optional[str] = Field(default=None, max_length=40)
+
+def _contact_view(doc: dict) -> dict:
+    return {k: v for k, v in doc.items() if k not in ("_id", "owner_user_id")}
+
+async def contacts_manager_on_profile_view(owner_user_id: str, req: ContactViewReq) -> dict:
+    """Contacts Manager: on the FIRST access to a profile, persist it into `UserContacts`
+    with isSavedLocally=True. Later accesses only refresh lastSyncDate."""
+    now = datetime.now(timezone.utc)
+    match = {"owner_user_id": owner_user_id}
+    if req.profileId:
+        match["profileId"] = req.profileId
+    elif req.phone:
+        match["phone"] = req.phone
+    else:
+        match["displayName"] = req.displayName.strip()
+    existing = await db.UserContacts.find_one(match)
+    if existing:
+        await db.UserContacts.update_one({"_id": existing["_id"]}, {"$set": {"lastSyncDate": now, "displayName": req.displayName.strip()}})
+        existing.update({"lastSyncDate": now, "displayName": req.displayName.strip()})
+        return {"contact": _contact_view(existing), "created": False, "message": None}
+    doc = {
+        "id": str(uuid.uuid4()),
+        "owner_user_id": owner_user_id,
+        "profileId": req.profileId,
+        "displayName": req.displayName.strip(),
+        "profileImageUrl": req.profileImageUrl,
+        "phone": req.phone,
+        "lastSyncDate": now,
+        "isSavedLocally": True,
+        "createdAt": now,
+    }
+    await db.UserContacts.insert_one(doc)
+    logging.info(f"ContactsManager: auto-saved contact '{doc['displayName']}' for user {owner_user_id}")
+    return {"contact": _contact_view(doc), "created": True, "message": "Contacto sincronizado automáticamente"}
+
+@api_router.post("/contacts/view")
+async def contact_viewed(req: ContactViewReq, user=Depends(get_current_user)):
+    return await contacts_manager_on_profile_view(user["id"], req)
+
+@api_router.get("/contacts")
+async def list_contacts(user=Depends(get_current_user)):
+    items = await db.UserContacts.find({"owner_user_id": user["id"]}).sort("lastSyncDate", -1).to_list(500)
+    return [_contact_view(i) for i in items]
+
+@api_router.delete("/contacts/{contact_id}")
+async def delete_contact(contact_id: str, user=Depends(get_current_user)):
+    res = await db.UserContacts.delete_one({"id": contact_id, "owner_user_id": user["id"]})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Not found")
+    return {"success": True}
 
 # ------------------- TTS -------------------
 
