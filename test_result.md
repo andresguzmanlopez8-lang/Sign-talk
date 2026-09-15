@@ -143,3 +143,7 @@
 
 ## Iteration 11 — main agent
 - Twilio Verify OTP: send-otp → Twilio verifications.create (mode "sms") unless number in OTP_TEST_NUMBERS (mode "test", code 123456). verify-otp → verification_checks. Test numbers listed in /app/memory/test_credentials.md. Current TWILIO_AUTH_TOKEN provided by user is 31 chars → Twilio returns 20003 auth failed (mapped to 502) — waiting for corrected token.
+
+## Iteration 12 — main agent (live Twilio)
+- Valid TWILIO_AUTH_TOKEN set. Owner number +523171113788 verified as Caller ID via API (OutgoingCallerIds). Live: send-otp → mode sms/pending; verify-otp with received code 621315 → 200 token; reuse → 400 expired. Twilio errors now 424 instead of 502 (CDN rewrote 5xx bodies); api.ts never shows raw non-JSON error bodies.
+- Limitation: other real numbers return 400 "Número no verificado…" until the Twilio Primary Compliance Profile is approved.
