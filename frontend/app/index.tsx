@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { View, ActivityIndicator, StyleSheet, Text } from "react-native";
 import { useRouter } from "expo-router";
-import { getToken } from "@/src/api";
+import { getToken, SESSION_EXPIRED_MESSAGE } from "@/src/api";
 import { api } from "@/src/api";
 import { colors, spacing } from "@/src/theme";
 
@@ -22,8 +22,9 @@ export default function Index() {
         } else {
           router.replace("/(tabs)/translator");
         }
-      } catch {
-        router.replace("/phone");
+      } catch (e: any) {
+        // An invalid/expired token is already redirected (with notice) by the api layer.
+        if (e?.message !== SESSION_EXPIRED_MESSAGE) router.replace("/phone");
       }
     })();
   }, [router]);

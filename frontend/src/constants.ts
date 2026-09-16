@@ -222,6 +222,7 @@ export const STRINGS = {
     removeAds: "Quitar anuncios con Premium",
     comingSoon: "Disponible próximamente",
     processing: "Procesando...",
+    sessionExpired: "Tu sesión expiró. Inicia sesión de nuevo.",
   },
   en: {
     appName: "SignBridge",
@@ -425,6 +426,7 @@ export const STRINGS = {
     removeAds: "Remove ads with Premium",
     comingSoon: "Coming soon",
     processing: "Processing...",
+    sessionExpired: "Your session expired. Please sign in again.",
   },
 };
 

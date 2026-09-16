@@ -11,7 +11,7 @@ import {
   FlatList,
   ActivityIndicator,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "@/src/api";
 import { colors, spacing, radius } from "@/src/theme";
@@ -20,6 +20,7 @@ import { useLang } from "@/src/lang";
 
 export default function Phone() {
   const router = useRouter();
+  const { expired } = useLocalSearchParams<{ expired?: string }>();
   const insets = useSafeAreaInsets();
   const { t, lang, setLang } = useLang();
   const [country, setCountry] = useState(COUNTRIES[0]);
@@ -77,6 +78,12 @@ export default function Phone() {
           <Text style={styles.title}>{t.appName}</Text>
           <Text style={styles.subtitle}>{t.tagline}</Text>
         </View>
+
+        {expired === "1" && (
+          <View style={styles.expiredBox} testID="session-expired">
+            <Text style={styles.expiredText}>⏰ {t.sessionExpired}</Text>
+          </View>
+        )}
 
         <View style={styles.form}>
           <Text style={styles.label}>{t.phone}</Text>
@@ -157,6 +164,8 @@ export default function Phone() {
 }
 
 const styles = StyleSheet.create({
+  expiredBox: { marginHorizontal: spacing.lg, marginBottom: spacing.lg, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: spacing.md, borderWidth: 1, borderColor: colors.warning },
+  expiredText: { color: colors.warning, fontWeight: "700", fontSize: 13, textAlign: "center" },
   container: { flex: 1, backgroundColor: colors.surface },
   inner: { flex: 1, paddingHorizontal: spacing.xl },
   header: { flexDirection: "row", justifyContent: "flex-end" },

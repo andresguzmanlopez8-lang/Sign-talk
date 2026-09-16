@@ -1,8 +1,22 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { router } from "expo-router";
 
 const BASE = process.env.EXPO_PUBLIC_BACKEND_URL as string;
 
 const TOKEN_KEY = "signbridge_token";
+export const SESSION_EXPIRED_MESSAGE = "Tu sesión expiró. Inicia sesión de nuevo.";
+let sessionExpiredAt = 0;
+
+/** Token invalid/expired: drop it and send the user back to the login screen (once per burst of failures). */
+async function handleSessionExpired() {
+  const hadToken = !!(await getToken());
+  await clearToken();
+  const now = Date.now();
+  if (now - sessionExpiredAt > 3000) {
+    sessionExpiredAt = now;
+    router.replace(hadToken ? { pathname: "/phone", params: { expired: "1" } } : "/phone");
+  }
+}
 
 export async function saveToken(token: string) {
   await AsyncStorage.setItem(TOKEN_KEY, token);
@@ -30,6 +44,10 @@ async function request<T>(
     body: opts.form ? (opts.form as any) : opts.body ? JSON.stringify(opts.body) : undefined,
   });
   if (!res.ok) {
+    if (res.status === 401 && opts.auth !== false) {
+      await handleSessionExpired();
+      throw new Error(SESSION_EXPIRED_MESSAGE);
+    }
     const text = await res.text();
     let message: string | null = null;
     try {
@@ -119,6 +137,7 @@ export const api = {
   // Chat 1:1
   chatMatch: (phones: string[]) => request<{ items: any[] }>("/chat/match", { method: "POST", body: { phones } }),
   conversations: () => request<any[]>("/chat/conversations"),
+  chatUnread: () => request<{ unread: number }>("/chat/unread"),
   openConversation: (payload: { peer_id?: string; phone?: string }) =>
     request<any>("/chat/conversations", { method: "POST", body: payload }),
   chatMessages: (cid: string, after?: string | null) =>

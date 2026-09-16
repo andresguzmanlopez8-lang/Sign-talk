@@ -1413,6 +1413,19 @@ async def list_conversations(user=Depends(get_current_user)):
     convs = await db.conversations.find({"participants": user["id"]}, {"_id": 0}).sort("updated_at", -1).to_list(200)
     return [await _conversation_view(c, user["id"]) for c in convs]
 
+@api_router.get("/chat/unread")
+async def chat_unread(user=Depends(get_current_user)):
+    """Total unread messages across all conversations (tab badge)."""
+    convs = await db.conversations.find({"participants": user["id"]}, {"_id": 0, "id": 1, "last_read": 1}).to_list(500)
+    total = 0
+    for c in convs:
+        q = {"conversation_id": c["id"], "sender_id": {"$ne": user["id"]}}
+        last_read = (c.get("last_read") or {}).get(user["id"])
+        if last_read:
+            q["created_at"] = {"$gt": last_read}
+        total += await db.chat_messages.count_documents(q)
+    return {"unread": total}
+
 @api_router.get("/chat/conversations/{cid}/messages")
 async def chat_messages(cid: str, after: Optional[str] = None, user=Depends(get_current_user)):
     """Messages of a conversation (oldest first). `after` (ISO) returns only newer ones → used for polling.
