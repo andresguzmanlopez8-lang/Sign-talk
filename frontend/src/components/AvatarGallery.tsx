@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Pressable, ActivityIndicator } from "react-nati
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
-import { api } from "@/src/api";
+import { api, mediaUrl } from "@/src/api";
 import { colors, spacing, radius } from "@/src/theme";
 import { useLang } from "@/src/lang";
 import { usePremium } from "@/src/premium";
@@ -66,7 +66,7 @@ export default function AvatarGallery({ selectedId, onSelect, compact }: Props) 
             const locked = a.locked && !isPremium;
             return (
               <Pressable key={a.id} style={[styles.card, compact && styles.cardCompact, active && styles.cardActive, locked && styles.cardLocked]} onPress={() => pick(a)} testID={`avatar-${a.id}`}>
-                <Image source={{ uri: a.image_url }} style={[styles.img, compact && styles.imgCompact, locked && styles.imgLocked]} contentFit="cover" />
+                <Image source={{ uri: mediaUrl(a.image_url) }} style={[styles.img, compact && styles.imgCompact, locked && styles.imgLocked]} contentFit="cover" />
                 <Text style={styles.name}>{a.name}</Text>
                 <Text style={styles.style}>{locked ? `👑 ${t.premiumOnly}` : a.style}</Text>
                 {locked && <Text style={styles.lock} testID={`avatar-locked-${a.id}`}>🔒</Text>}

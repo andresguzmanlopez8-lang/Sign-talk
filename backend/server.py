@@ -141,7 +141,7 @@ def _is_premium(user: Optional[dict]) -> bool:
 def _avatar_view(a: dict, user: Optional[dict] = None) -> dict:
     return {**{k: v for k, v in a.items() if k != "seed"},
             "locked": a["id"] not in FREE_AVATAR_IDS and not _is_premium(user),
-            "image_url": f"https://api.dicebear.com/9.x/adventurer/png?seed={a['seed']}&size=256&backgroundColor=ffdfbf,c0aede,b6e3f4"}
+            "image_url": f"/api/media/avatars/{a['id']}.png"}
 
 def _avatar_by_id(avatar_id: Optional[str]) -> dict:
     return next((a for a in AVATARS if a["id"] == avatar_id), next(a for a in AVATARS if a["id"] == DEFAULT_AVATAR_ID))
@@ -359,6 +359,8 @@ async def billing_deactivate_test(user=Depends(get_current_user)):
 
 import subprocess, shutil, urllib.request
 import imageio_ffmpeg
+import avatar2d
+import gestures
 
 FFMPEG = shutil.which("ffmpeg") or imageio_ffmpeg.get_ffmpeg_exe()
 MEDIA_DIR = ROOT_DIR / "media"
@@ -366,8 +368,6 @@ GIF_CACHE = MEDIA_DIR / "gifs"
 VIDEO_DIR = MEDIA_DIR / "videos"
 for _d in (GIF_CACHE, VIDEO_DIR):
     _d.mkdir(parents=True, exist_ok=True)
-CLIP_SECONDS = 1.2
-INTRO_SECONDS = 1.2
 MAX_VIDEO_SIGNS = 24
 
 def _download(url: str, dest: Path) -> Path:
@@ -377,65 +377,105 @@ def _download(url: str, dest: Path) -> Path:
             f.write(r.read())
     return dest
 
-def _render_sign_video(letters: List[str], gif_urls: List[str], avatar: dict, out_path: Path) -> None:
-    """Compose intro (avatar card) + one clip per sign into a single H.264 MP4. Raises on failure/0 KB."""
+def _render_sign_video(tokens: List[avatar2d.Token], avatar: dict, out_path: Path) -> None:
+    """Render the 2D full-body avatar frames for the whole message and encode ONE continuous MP4 (+ WebM twin)."""
     work = out_path.parent / f"tmp-{out_path.stem}"
-    work.mkdir(exist_ok=True)
+    shutil.rmtree(work, ignore_errors=True)
     try:
-        clips: List[Path] = []
-        vf = "scale=480:480:force_original_aspect_ratio=decrease,pad=480:480:(ow-iw)/2:(oh-ih)/2:color=#0D0E12,format=yuv420p,fps=15"
-        avatar_png = _download(_avatar_view(avatar)["image_url"], GIF_CACHE / f"avatar-{avatar['id']}.png")
-        intro = work / "000-intro.mp4"
-        subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-loop", "1", "-t", str(INTRO_SECONDS), "-i", str(avatar_png),
-                        "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", str(intro)], check=True, timeout=60)
-        clips.append(intro)
-        for i, (letter, url) in enumerate(zip(letters, gif_urls), start=1):
-            src = _download(url, GIF_CACHE / f"{hashlib.sha1(url.encode()).hexdigest()}{Path(url).suffix or '.gif'}")
-            clip = work / f"{i:03d}-{letter}.mp4"
-            subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ignore_loop", "0", "-t", str(CLIP_SECONDS), "-i", str(src),
-                            "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-an", str(clip)], check=True, timeout=60)
-            clips.append(clip)
-        concat = work / "list.txt"
-        concat.write_text("".join(f"file '{c}'\n" for c in clips))
-        subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(concat),
-                        "-c", "copy", "-movflags", "+faststart", str(out_path)], check=True, timeout=120)
+        count = avatar2d.render_frames(tokens, avatar2d.LOOKS.get(avatar["id"], avatar2d.DEFAULT_LOOK), work)
+        if count == 0:
+            raise RuntimeError("No frames rendered")
+        subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-framerate", str(avatar2d.FPS), "-i", str(work / "frame_%04d.png"),
+                        "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an", str(out_path)],
+                       check=True, timeout=180)
         if not out_path.exists() or out_path.stat().st_size == 0:
             raise RuntimeError("Rendered video is empty (0 KB)")
         # WebM (VP8) twin for web browsers without H.264 support; native players use the MP4.
         webm = out_path.with_suffix(".webm")
-        subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(out_path), "-c:v", "libvpx", "-b:v", "400k",
-                        "-deadline", "realtime", "-cpu-used", "8", "-an", str(webm)], check=True, timeout=120)
+        subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(out_path), "-c:v", "libvpx", "-b:v", "500k",
+                        "-deadline", "realtime", "-cpu-used", "8", "-an", str(webm)], check=True, timeout=180)
         if not webm.exists() or webm.stat().st_size == 0:
             raise RuntimeError("Rendered webm is empty (0 KB)")
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
-async def build_sign_video(letters: List[str], language: str, avatar_id: Optional[str], priority: bool = False) -> Optional[str]:
-    """Returns /api/media/videos/<key>.mp4 for the given sign sequence, rendering and caching it on first use.
+async def _tokenize_for_signs(text: str, language: str) -> List[avatar2d.Token]:
+    """Greedy longest-match of phrases/words against the bimanual gesture library (accent-insensitive);
+    function words are dropped (as in sign language); only unknown words (names…) are fingerspelled
+    with the dictionary handshape picture on the dominant hand."""
+    words = [w for w in re.split(r"[^\wáéíóúüñÁÉÍÓÚÜÑ']+", text) if w]
+    norm = [gestures.normalize(w) for w in words]
+    letters_needed = {c.upper() for w in words for c in w if c.isalpha()}
+    entries = await db.dictionary.find({"language": language, "kind": "letter", "label": {"$in": sorted(letters_needed)}}, {"_id": 0}).to_list(100)
+    by_label = {e["label"].upper(): e for e in entries}
+    tokens: List[avatar2d.Token] = []
+    signs = 0
+    i = 0
+    while i < len(words) and signs < MAX_VIDEO_SIGNS:
+        matched = False
+        for n in range(min(gestures.MAX_PHRASE_WORDS, len(words) - i), 0, -1):
+            key = " ".join(norm[i:i + n])
+            if key in gestures.WORD_GESTURES:
+                tokens.append(avatar2d.Token("word", " ".join(words[i:i + n]).lower()))
+                signs += 1
+                i += n
+                matched = True
+                break
+        if matched:
+            continue
+        w = words[i]
+        i += 1
+        if norm[i - 1] in gestures.STOPWORDS:
+            continue
+        for c in w:
+            if not c.isalpha() or signs >= MAX_VIDEO_SIGNS:
+                continue
+            e = by_label.get(c.upper()) or by_label.get(c.upper().replace("Ñ", "N"))
+            url = (e or {}).get("gif_url") or (e or {}).get("image_url")
+            path = None
+            if url:
+                try:
+                    path = await run_in_threadpool(_download, url, GIF_CACHE / f"{hashlib.sha1(url.encode()).hexdigest()}{Path(url).suffix or '.gif'}")
+                except Exception as ex:
+                    logging.warning(f"handshape download failed for {c}: {ex}")
+            tokens.append(avatar2d.Token("letter", c.upper(), path))
+            signs += 1
+    return tokens
+
+async def build_sign_video(text: str, language: str, avatar_id: Optional[str], priority: bool = False) -> Optional[str]:
+    """Returns /api/media/videos/<key>.mp4 for the message, rendering (2D full-body avatar) and caching it on first use.
     Premium (priority=True) renders immediately; free renders wait in a single-slot queue."""
     avatar = _avatar_by_id(avatar_id)
-    letters = [l for l in letters if l.isalpha()][:MAX_VIDEO_SIGNS]
-    if not letters:
+    tokens = await _tokenize_for_signs(text, language)
+    if not tokens:
         return None
-    entries = await db.dictionary.find({"language": language, "kind": "letter", "label": {"$in": letters}}, {"_id": 0}).to_list(100)
-    by_label = {e["label"]: e for e in entries}
-    urls = []
-    for l in letters:
-        e = by_label.get(l) or by_label.get(l.upper())
-        if e and (e.get("gif_url") or e.get("image_url")):
-            urls.append(e.get("gif_url") or e.get("image_url"))
-    if not urls:
-        return None
-    key = hashlib.sha256(f"{language}|{avatar['id']}|{'|'.join(letters)}|{'|'.join(urls)}".encode()).hexdigest()[:32]
+    sig = "|".join(f"{t.kind}:{t.label}:{t.handshape.name if t.handshape else '-'}" for t in tokens)
+    key = hashlib.sha256(f"v2|{language}|{avatar['id']}|{sig}".encode()).hexdigest()[:32]
     out = VIDEO_DIR / f"{key}.mp4"
-    if not out.exists() or out.stat().st_size == 0 or not out.with_suffix(".webm").exists():
+
+    def _missing() -> bool:
+        return not out.exists() or out.stat().st_size == 0 or not out.with_suffix(".webm").exists()
+
+    if _missing():
         if priority:
-            await run_in_threadpool(_render_sign_video, letters[: len(urls)], urls, avatar, out)
+            await run_in_threadpool(_render_sign_video, tokens, avatar, out)
         else:
             async with _free_render_queue:
-                if not out.exists() or out.stat().st_size == 0 or not out.with_suffix(".webm").exists():
-                    await run_in_threadpool(_render_sign_video, letters[: len(urls)], urls, avatar, out)
+                if _missing():
+                    await run_in_threadpool(_render_sign_video, tokens, avatar, out)
     return f"/api/media/videos/{key}.mp4"
+
+AVATAR_PORTRAIT_DIR = MEDIA_DIR / "avatars"
+
+@api_router.get("/media/avatars/{avatar_id}.png")
+async def get_avatar_portrait(avatar_id: str):
+    look = avatar2d.LOOKS.get(avatar_id)
+    if not look:
+        raise HTTPException(404, "Not found")
+    path = AVATAR_PORTRAIT_DIR / f"{avatar_id}-v2.png"
+    if not path.exists() or path.stat().st_size == 0:
+        await run_in_threadpool(avatar2d.render_portrait, look, path)
+    return Response(content=path.read_bytes(), media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
 
 import asyncio
 _free_render_queue = asyncio.Semaphore(1)
@@ -707,19 +747,37 @@ async def get_dictionary_entry(entry_id: str):
 
 VISION_MODEL = ("openai", "gpt-5.4")
 
+def _sign_vocabulary(language: str) -> List[str]:
+    """Words/phrases the camera should recognise as whole signs (dictionary words + phrase vocabulary)."""
+    dictionary = [e["label"] for e in _seed_dictionary_data() if e["language"] == language and e["kind"] == "word"]
+    extra_es = ["por favor", "mucho gusto", "hasta luego", "te quiero", "cuánto", "dónde", "cómo", "necesito", "puedes", "repetir",
+                "escribir", "sordo", "señas", "hablar", "momento", "beber", "lengua de señas", "quién", "cuándo"]
+    extra_en = ["please", "nice to meet", "see you later", "i love you", "how much", "where", "how", "need", "can", "repeat",
+                "write", "deaf", "sign language", "speak", "moment", "who", "when", "what"]
+    seen, out = set(), []
+    for w in dictionary + (extra_es if language == "es" else extra_en):
+        k = w.lower()
+        if k not in seen:
+            seen.add(k)
+            out.append(k)
+    return out
+
 def _sign_system_prompt(language: str) -> str:
     lang_name = "Mexican Sign Language (LSM)" if language == "es" else "American Sign Language (ASL)"
     text_lang = "Spanish" if language == "es" else "English"
+    vocab = ", ".join(_sign_vocabulary(language))
     return (
         f"You are a {lang_name} recognition model. You receive an ORDERED burst of camera frames (chronological, "
         "captured at 2-3 frames per second, about 1-2 seconds total) of a person performing ONE sign. "
-        "Analyze the frames as a temporal sequence: compare hand shape, position and movement across frames. "
-        "Distinguish STATIC fingerspelling (hand shape held still, e.g. letter 'W') from DYNAMIC gestures with movement "
-        f"(e.g. '{'agua' if language == 'es' else 'water'}': W-hand tapping the chin twice). "
-        "Identify a fingerspelled letter (A-Z, plus Ñ for LSM) or a common word "
-        f"(in {text_lang}, e.g. hello, thanks, yes, no, please, sorry, love, friend, help, water, eat, family, house, mom, dad). "
+        "Analyze the frames as a temporal sequence: compare hand shape, position and movement of BOTH hands across frames. "
+        "Distinguish STATIC fingerspelling (one hand held still, e.g. letter 'W') from DYNAMIC lexical signs with movement "
+        f"(e.g. '{'agua' if language == 'es' else 'water'}': W-hand tapping the chin twice; '{'gracias' if language == 'es' else 'thank you'}': flat hand from the chin forward). "
+        "Rule: if the hand is held STILL across the frames (no movement, one hand), it is FINGERSPELLING → return the single letter. "
+        "Return a WORD or PHRASE only when you see its characteristic movement, location (chin, chest, forehead…) or a two-handed configuration; "
+        "when a static handshape is ambiguous between a letter and a word, choose the letter. "
+        f"Identify a fingerspelled letter (A-Z{', plus Ñ' if language == 'es' else ''}) or one of these {text_lang} words/phrases: {vocab}. "
         "If no hand or no clear sign is visible in the frames, return null. Never guess when the hands are not visible. "
-        'Respond ONLY with compact JSON: {"sign": "<letter or word or null>", "confidence": <0.0-1.0>, "motion": "static"|"dynamic"|"none"}'
+        'Respond ONLY with compact JSON: {"sign": "<letter or word/phrase or null>", "confidence": <0.0-1.0>, "motion": "static"|"dynamic"|"none"}'
     )
 
 def _parse_sign_json(raw: str) -> dict:
@@ -816,7 +874,7 @@ async def text_to_sign(req: TextToSignReq, user=Depends(get_current_user)):
     seq = [c.upper() for c in req.text if c.isalpha()][:60]
     avatar_id = user.get("avatar_id") or DEFAULT_AVATAR_ID
     try:
-        video_url = await build_sign_video(seq, req.language, avatar_id, priority=_is_premium(user))
+        video_url = await build_sign_video(req.text, req.language, avatar_id, priority=_is_premium(user))
     except Exception as e:
         logging.warning(f"Sign video render failed: {e}")
         raise HTTPException(424, "No se pudo generar el video del avatar. Inténtalo de nuevo.")
@@ -861,13 +919,22 @@ async def voice_to_text(
 ):
     text = await _transcribe_upload(audio, language)
     seq = [c.upper() for c in text if c.isalpha()][:60]
+    lang = "es" if language == "es" else "en"
+    avatar_id = user.get("avatar_id") or DEFAULT_AVATAR_ID
+    video_url = None
+    try:
+        video_url = await build_sign_video(text, lang, avatar_id, priority=_is_premium(user))
+    except Exception as e:
+        logging.warning(f"Voice sign video render failed: {e}")
     msg = Message(
         user_id=user["id"],
         direction="voice_to_text",
-        language=language,
+        language=lang,
         original_text=text,
         translated_text=text,
         sign_sequence=seq,
+        video_url=video_url,
+        avatar_id=avatar_id,
     )
     await db.messages.insert_one(msg.model_dump())
     return msg.model_dump()
@@ -1508,9 +1575,8 @@ async def chat_sign_video(mid: str, user=Depends(get_current_user)):
     await _conv_for(msg["conversation_id"], user["id"])
     if msg.get("video_url"):
         return _chat_msg_view(msg)
-    seq = [c.upper() for c in msg["text"] if c.isalpha()][:60]
     try:
-        video_url = await build_sign_video(seq, msg["language"], msg.get("avatar_id"), priority=_is_premium(user))
+        video_url = await build_sign_video(msg["text"], msg["language"], msg.get("avatar_id"), priority=_is_premium(user))
     except Exception as e:
         logging.warning(f"Chat sign video render failed: {e}")
         raise HTTPException(424, "No se pudo generar el video del avatar. Inténtalo de nuevo.")

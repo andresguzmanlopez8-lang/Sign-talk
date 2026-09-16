@@ -28,6 +28,11 @@ export async function clearToken() {
   await AsyncStorage.removeItem(TOKEN_KEY);
 }
 
+/** Absolute URL for backend-served media (relative `/api/media/...` paths). */
+export function mediaUrl(path: string) {
+  return path.startsWith("/") ? `${BASE}${path}` : path;
+}
+
 async function request<T>(
   path: string,
   opts: { method?: string; body?: any; auth?: boolean; form?: FormData } = {}

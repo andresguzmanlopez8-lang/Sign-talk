@@ -1,13 +1,13 @@
 import { useState } from "react";
-import { View, Text, StyleSheet, Pressable, ActivityIndicator, Platform } from "react-native";
+import { View, Text, StyleSheet, Pressable, ActivityIndicator, Platform, StyleProp, ViewStyle } from "react-native";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { useEvent } from "expo";
 import { colors, spacing, radius } from "@/src/theme";
 
-type Props = { uri: string; testID?: string };
+type Props = { uri: string; testID?: string; style?: StyleProp<ViewStyle> };
 
 /** Native video player embedded inside a chat bubble (never opens a link / leaves the app). */
-export default function BubbleVideo({ uri, testID }: Props) {
+export default function BubbleVideo({ uri, testID, style }: Props) {
   const [ready, setReady] = useState(false);
   // Web browsers without H.264 (e.g. Chromium) get the WebM twin; native players use MP4.
   const source = Platform.OS === "web" ? uri.replace(/\.mp4$/, ".webm") : uri;
@@ -21,7 +21,7 @@ export default function BubbleVideo({ uri, testID }: Props) {
   const showSpinner = !ready && status !== "readyToPlay" && status !== "error";
 
   return (
-    <View style={styles.wrap} testID={testID ?? "bubble-video"}>
+    <View style={[styles.wrap, style]} testID={testID ?? "bubble-video"}>
       <VideoView
         player={player}
         style={styles.video}

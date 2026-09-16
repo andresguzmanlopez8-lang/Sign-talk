@@ -13,8 +13,7 @@ import {
 } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as ImageManipulator from "expo-image-manipulator";
-import { useAudioPlayer, useAudioRecorder, AudioModule, RecordingPresets, setAudioModeAsync } from "expo-audio";
-import { Image } from "expo-image";
+import { useAudioRecorder, AudioModule, RecordingPresets, setAudioModeAsync } from "expo-audio";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -47,9 +46,6 @@ type Msg = {
 
 type Mode = "sign" | "voice";
 
-const ASL_GIF = (letter: string) =>
-  `https://www.lifeprint.com/asl101/gifs-animated/${letter.toLowerCase()}.gif`;
-
 export default function Translator() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -66,8 +62,7 @@ export default function Translator() {
   const [recordingVoice, setRecordingVoice] = useState(false);
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState("");
-  const [avatarSeq, setAvatarSeq] = useState<string[] | null>(null);
-  const [avatarIdx, setAvatarIdx] = useState(0);
+  const [avatarVideo, setAvatarVideo] = useState<string | null>(null);
   const [favorites, setFavorites] = useState<Favorite[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -212,7 +207,7 @@ export default function Translator() {
     try {
       const msg = await api.textToSign(phrase, lang);
       setMessages((prev) => [...prev, msg]);
-      setAvatarSeq(msg.sign_sequence ?? null);
+      setAvatarVideo(msg.video_url ?? null);
       notifyMessageSent();
     } catch (e) {
       console.warn(e);
@@ -248,22 +243,6 @@ export default function Translator() {
       setMessages(list);
     } catch {}
   };
-
-  // Animate avatar sequence
-  useEffect(() => {
-    if (!avatarSeq || avatarSeq.length === 0) return;
-    setAvatarIdx(0);
-    const iv = setInterval(() => {
-      setAvatarIdx((i) => {
-        if (i + 1 >= avatarSeq.length) {
-          clearInterval(iv);
-          return i;
-        }
-        return i + 1;
-      });
-    }, 800);
-    return () => clearInterval(iv);
-  }, [avatarSeq]);
 
   const startRecordSign = async () => {
     if (!camPerm?.granted) {
@@ -345,7 +324,7 @@ export default function Translator() {
         setLoading(true);
         const msg = await api.voiceToText(uri, lang);
         setMessages((prev) => [...prev, msg]);
-        setAvatarSeq(msg.sign_sequence ?? null);
+        setAvatarVideo(msg.video_url ?? null);
         notifyMessageSent();
       }
     } catch (e) {
@@ -362,7 +341,7 @@ export default function Translator() {
     try {
       const msg = await api.textToSign(text.trim(), lang);
       setMessages((prev) => [...prev, msg]);
-      setAvatarSeq(msg.sign_sequence ?? null);
+      setAvatarVideo(msg.video_url ?? null);
       setText("");
       notifyMessageSent();
     } catch (e) {
@@ -377,7 +356,7 @@ export default function Translator() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     await api.clearMessages();
     setMessages([]);
-    setAvatarSeq(null);
+    setAvatarVideo(null);
   };
 
   const scrollToEnd = () => {
@@ -412,9 +391,12 @@ export default function Translator() {
         {item.video_url && <BubbleVideo uri={`${api.base}${item.video_url}`} testID={`video-${item.id}`} />}
         <Text style={styles.bubbleText}>{item.translated_text}</Text>
         <View style={styles.bubbleActions}>
-          {!isSign && item.sign_sequence && item.sign_sequence.length > 0 && (
+          {!isSign && item.video_url && (
             <Pressable
-              onPress={() => setAvatarSeq(item.sign_sequence!)}
+              onPress={() => {
+                setMode("voice");
+                setAvatarVideo(item.video_url!);
+              }}
               style={styles.replayBtn}
               testID={`replay-${item.id}`}
             >
@@ -459,7 +441,6 @@ export default function Translator() {
 
   const isFav = (text: string) => favorites.some((f) => f.text === text);
 
-  const currentLetter = avatarSeq && avatarSeq[avatarIdx];
 
   return (
     <KeyboardAvoidingView
@@ -559,26 +540,11 @@ export default function Translator() {
             )
           ) : (
             <View style={styles.avatarWrap} testID="avatar-view">
-              {currentLetter ? (
-                <>
-                  <Image
-                    source={{ uri: ASL_GIF(currentLetter) }}
-                    style={styles.avatarGif}
-                    contentFit="contain"
-                    testID="avatar-gif"
-                  />
-                  <View style={styles.avatarLetter}>
-                    <Text style={styles.avatarLetterText}>{currentLetter}</Text>
-                  </View>
-                  <View style={styles.avatarProgress}>
-                    <Text style={styles.avatarProgressText}>
-                      {avatarIdx + 1} / {avatarSeq?.length}
-                    </Text>
-                  </View>
-                </>
+              {avatarVideo ? (
+                <BubbleVideo key={avatarVideo} uri={`${api.base}${avatarVideo}`} style={styles.avatarVideo} testID="avatar-video" />
               ) : (
                 <View style={styles.avatarEmpty}>
-                  <Text style={styles.avatarEmptyIcon}>👐</Text>
+                  <Text style={styles.avatarEmptyIcon}>🧍</Text>
                   <Text style={styles.avatarEmptyText}>{t.signAvatar}</Text>
                 </View>
               )}
@@ -773,11 +739,7 @@ const styles = StyleSheet.create({
   },
   primaryBtnText: { color: colors.onBrandPrimary, fontWeight: "700" },
   avatarWrap: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#0a0b0f" },
-  avatarGif: { width: "80%", height: "80%" },
-  avatarLetter: { position: "absolute", top: spacing.md, right: spacing.md, backgroundColor: colors.brandPrimary, width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
-  avatarLetterText: { color: colors.onBrandPrimary, fontWeight: "800", fontSize: 20 },
-  avatarProgress: { position: "absolute", bottom: spacing.md, left: spacing.md, backgroundColor: "rgba(0,0,0,0.6)", paddingHorizontal: spacing.md, paddingVertical: 4, borderRadius: radius.pill },
-  avatarProgressText: { color: "#fff", fontWeight: "700", fontSize: 12 },
+  avatarVideo: { width: "100%", height: "100%", borderRadius: 0, marginBottom: 0 },
   avatarEmpty: { alignItems: "center", gap: spacing.sm },
   avatarEmptyIcon: { fontSize: 60 },
   avatarEmptyText: { color: colors.onSurfaceTertiary, fontSize: 14 },

@@ -5,7 +5,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
-import { api } from "@/src/api";
+import { api, mediaUrl } from "@/src/api";
 import { colors, spacing, radius } from "@/src/theme";
 import { useLang } from "@/src/lang";
 import { usePremium } from "@/src/premium";
@@ -96,7 +96,7 @@ export default function Paywall() {
           <View style={styles.avatarRow} testID="paywall-avatars">
             {avatars.map((a) => (
               <View key={a.id} style={styles.avatarWrap}>
-                <Image source={{ uri: a.image_url }} style={styles.avatarImg} contentFit="cover" />
+                <Image source={{ uri: mediaUrl(a.image_url) }} style={styles.avatarImg} contentFit="cover" />
                 {a.locked && (
                   <View style={styles.lockBadge}>
                     <Text style={styles.lockText}>🔒</Text>
