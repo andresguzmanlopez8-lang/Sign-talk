@@ -137,7 +137,9 @@ class SignToTextReq(BaseModel):
     signs: List[str] = Field(default_factory=list, max_length=120)
 
 class SignFrameReq(BaseModel):
-    image_base64: str = Field(min_length=100, max_length=4_000_000)  # ~3 MB of base64
+    # Ordered burst of 1-5 key frames (base64 JPEG/PNG) captured at 2-3 fps; chronological order matters
+    frames: List[str] = Field(default_factory=list, max_length=5)
+    image_base64: Optional[str] = Field(default=None, max_length=4_000_000)  # legacy single frame
     language: Literal["es", "en"] = "es"
     previous: List[str] = Field(default_factory=list, max_length=20)
 
@@ -492,11 +494,15 @@ def _sign_system_prompt(language: str) -> str:
     lang_name = "Mexican Sign Language (LSM)" if language == "es" else "American Sign Language (ASL)"
     text_lang = "Spanish" if language == "es" else "English"
     return (
-        f"You are a {lang_name} recognition model. You receive one camera frame of a person signing. "
-        "Identify the single sign being performed: a fingerspelled letter (A-Z, plus Ñ for LSM) or a common word "
-        f"(in {text_lang}, e.g. hello, thanks, yes, no, please, sorry, love, friend, help, water, eat, family, house). "
-        "If no hand or no clear sign is visible, return null. Never guess when the hands are not visible. "
-        'Respond ONLY with compact JSON: {"sign": "<letter or word or null>", "confidence": <0.0-1.0>}'
+        f"You are a {lang_name} recognition model. You receive an ORDERED burst of camera frames (chronological, "
+        "captured at 2-3 frames per second, about 1-2 seconds total) of a person performing ONE sign. "
+        "Analyze the frames as a temporal sequence: compare hand shape, position and movement across frames. "
+        "Distinguish STATIC fingerspelling (hand shape held still, e.g. letter 'W') from DYNAMIC gestures with movement "
+        f"(e.g. '{'agua' if language == 'es' else 'water'}': W-hand tapping the chin twice). "
+        "Identify a fingerspelled letter (A-Z, plus Ñ for LSM) or a common word "
+        f"(in {text_lang}, e.g. hello, thanks, yes, no, please, sorry, love, friend, help, water, eat, family, house, mom, dad). "
+        "If no hand or no clear sign is visible in the frames, return null. Never guess when the hands are not visible. "
+        'Respond ONLY with compact JSON: {"sign": "<letter or word or null>", "confidence": <0.0-1.0>, "motion": "static"|"dynamic"|"none"}'
     )
 
 def _parse_sign_json(raw: str) -> dict:
@@ -518,16 +524,23 @@ def _parse_sign_json(raw: str) -> dict:
         confidence = max(0.0, min(1.0, float(data.get("confidence", 0))))
     except (TypeError, ValueError):
         confidence = 0.0
-    return {"sign": sign, "confidence": confidence}
+    motion = data.get("motion") if data.get("motion") in ("static", "dynamic", "none") else ("none" if sign is None else "static")
+    return {"sign": sign, "confidence": confidence, "motion": motion}
 
 def _strip_data_url(b64: str) -> str:
     return b64.split(",", 1)[1] if b64.startswith("data:") else b64
 
 @api_router.post("/translate/sign-frame")
 async def sign_frame(req: SignFrameReq, user=Depends(get_current_user)):
-    """Recognize the sign in a single camera frame using the vision model."""
+    """Recognize the sign performed across an ordered burst of frames using the vision model."""
+    frames = [f for f in (req.frames or ([req.image_base64] if req.image_base64 else [])) if f and len(f) >= 100]
+    if not frames:
+        raise HTTPException(422, "At least one frame is required")
     prev = ", ".join(req.previous[-5:]) or "none"
-    prompt = f"Previously detected signs in this sequence: {prev}. Identify the sign in this frame."
+    prompt = (
+        f"Previously detected signs in this sequence: {prev}. "
+        f"Here are {len(frames)} frames in chronological order (frame 1 first). Identify the single sign performed."
+    )
     try:
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
@@ -535,14 +548,15 @@ async def sign_frame(req: SignFrameReq, user=Depends(get_current_user)):
             system_message=_sign_system_prompt(req.language),
         ).with_model(*VISION_MODEL)
         raw = await chat.send_message(
-            UserMessage(text=prompt, file_contents=[ImageContent(image_base64=_strip_data_url(req.image_base64))])
+            UserMessage(text=prompt, file_contents=[ImageContent(image_base64=_strip_data_url(f)) for f in frames])
         )
     except Exception as e:
         logging.warning(f"Vision model error: {e}")
-        raise HTTPException(502, "Sign recognition service unavailable")
+        raise HTTPException(424, "Sign recognition service unavailable")
     result = _parse_sign_json(raw)
     if result["sign"] and len(result["sign"]) == 1:
         result["sign"] = result["sign"].upper()
+    result["frames_analyzed"] = len(frames)
     return result
 
 def _compose_sentence(signs: List[str], language: str) -> str:

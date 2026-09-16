@@ -147,3 +147,6 @@
 ## Iteration 12 — main agent (live Twilio)
 - Valid TWILIO_AUTH_TOKEN set. Owner number +523171113788 verified as Caller ID via API (OutgoingCallerIds). Live: send-otp → mode sms/pending; verify-otp with received code 621315 → 200 token; reuse → 400 expired. Twilio errors now 424 instead of 502 (CDN rewrote 5xx bodies); api.ts never shows raw non-JSON error bodies.
 - Limitation: other real numbers return 400 "Número no verificado…" until the Twilio Primary Compliance Profile is approved.
+
+## Iteration 13 — main agent (Phase 1 perf + sequence recognition)
+- SignCamera memo component (autofocus off while recording). Capture 400ms sampling → buffer → bursts of 3-4 ordered frames → POST /api/translate/sign-frame {frames[], language, previous[]} → {sign, confidence, motion, frames_analyzed}. Fixtures: /app/backend/tests/fixtures/asl_{b,l,y,w}.jpg. Verified: W x4 → W static 0.99; L x3 → L static 0.99; b,l,y → dynamic; frames [] → 422; legacy image_base64 still works.

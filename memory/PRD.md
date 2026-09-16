@@ -12,7 +12,7 @@ Mobile app for bidirectional translation between Sign Language (LSM/ASL) and Spo
 2. **Onboarding**: Name, profile photo, preferred language (ES/EN).
 3. **Permissions**: Camera, Mic, Contacts with fallback screen for denied perms.
 4. **Translator tab**:
-   - Sign→Text mode (REAL recognition): tap 🎥 to start; every 1.5 s a downscaled frame (512px JPEG, expo-image-manipulator on native / base64 on web) is sent to `POST /translate/sign-frame` → OpenAI gpt-5.4 vision (emergentintegrations LlmChat + ImageContent) returns `{sign, confidence}`. Live overlay shows the detected sign + confidence and the running sequence (chips). Tap ⏹ to stop → `POST /translate/sign-to-text {signs}` composes the sentence deterministically (consecutive letters spell a word) and saves it; TTS plays it. No signs → toast 'No se detectó ninguna seña' and nothing is saved. All mock phrases removed.
+   - Sign→Text mode (REAL recognition, Phase 1 perf fix): camera preview isolated in memoized `src/components/SignCamera.tsx` (no re-render on parent state; autofocus off = locked while recording). Capture loop samples at 2.5 fps (400 ms) into a buffer (native takePicture + ImageManipulator 384px); analyzer loop sends ORDERED bursts of 3-4 frames to `POST /translate/sign-frame {frames[]}` (legacy `image_base64` still accepted) → OpenAI gpt-5.4 vision (emergentintegrations LlmChat + ImageContent) returns `{sign, confidence, motion: static|dynamic|none, frames_analyzed}` — the prompt evaluates the frames chronologically to distinguish static fingerspelling (W) from dynamic gestures (agua). Live overlay shows the detected sign + confidence (+🔁 when dynamic) and the running sequence (chips). Tap ⏹ to stop → `POST /translate/sign-to-text {signs}` composes the sentence deterministically (consecutive letters spell a word) and saves it; TTS plays it. No signs → toast 'No se detectó ninguna seña' and nothing is saved. All mock phrases removed.
    - Text/Voice→Sign mode: Text field or mic. Whisper transcribes voice. Result animated as ASL letter GIFs (avatar).
    - Chat history with WhatsApp-style bubbles. Language toggle LSM↔ASL.
 5. **Dictionary tab**: 129 seeded entries (A-Z LSM + A-Z ASL + 38 everyday words each; seed upserts missing ids on startup). Search, A-Z filter chips, letter/word filter, detail modal with GIF + description.
@@ -62,3 +62,8 @@ Mobile app for bidirectional translation between Sign Language (LSM/ASL) and Spo
 
 ## Design
 Dark-first utility theme (surface #0D0E12, brand #FF5722). High contrast for accessibility.
+
+## Roadmap agreed with user (2026-09-15)
+- Phase 1 (DONE): camera isolation/focus lock/2.5 fps sampling + burst sequence recognition.
+- Phase 2 (TODO): Avatar gallery (male/female styles, persisted in user profile) + server-side MP4 composed from sign GIFs (ffmpeg) stored in object storage, validated >0 KB, played natively in the bubble (expo-video) with loading state.
+- Phase 3 (TODO): 1-to-1 chat between registered users (by phone) with 4 modes: Text/Voice→Sign(avatar video), Sign→Text/Voice(TTS), Sign→Sign(avatar video), Text/Voice→Text/Voice (voice-note STT + TTS).

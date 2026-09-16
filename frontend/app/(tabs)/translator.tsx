@@ -24,6 +24,7 @@ import { colors, spacing, radius } from "@/src/theme";
 import { useLang } from "@/src/lang";
 import { exportChatPdf } from "@/src/exportChat";
 import ContactPicker from "@/src/components/ContactPicker";
+import { SignCamera } from "@/src/components/SignCamera";
 import PhraseSheet from "@/src/components/PhraseSheet";
 import StreakBanner from "@/src/components/StreakBanner";
 
@@ -64,34 +65,53 @@ export default function Translator() {
   const [phrasesOpen, setPhrasesOpen] = useState(false);
   // Live sign recognition state
   const cameraRef = useRef<CameraView>(null);
-  const [liveSign, setLiveSign] = useState<{ sign: string | null; confidence: number } | null>(null);
+  const [liveSign, setLiveSign] = useState<{ sign: string | null; confidence: number; motion?: string } | null>(null);
   const [detectedSigns, setDetectedSigns] = useState<string[]>([]);
   const detectedRef = useRef<string[]>([]);
   const recordingRef = useRef(false);
   const frameBusyRef = useRef(false);
   const frameTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const FRAME_INTERVAL_MS = 1500;
+  const FRAME_INTERVAL_MS = 400; // sampling: 2.5 fps
+  const BURST_SIZE = 4; // key frames per sign burst (3-5)
   const MIN_CONFIDENCE = 0.5;
+  const frameBufferRef = useRef<string[]>([]);
+  const analyzeBusyRef = useRef(false);
 
-  /** Capture one downscaled frame and ask the vision model which sign is shown. */
-  const analyzeFrame = async () => {
+  /** Capture one downscaled frame (native async work) and push it into the burst buffer. */
+  const captureFrame = async () => {
     if (!recordingRef.current || frameBusyRef.current || !cameraRef.current) return;
+    if (frameBufferRef.current.length >= BURST_SIZE + 1) return; // throttle: buffer full, wait for analysis
     frameBusyRef.current = true;
     try {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.4, skipProcessing: true, base64: Platform.OS === "web" });
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.3, skipProcessing: true, shutterSound: false, base64: Platform.OS === "web" });
       if (!photo) return;
       let base64 = photo.base64 ?? null;
       if (Platform.OS !== "web") {
-        const small = await ImageManipulator.manipulateAsync(photo.uri, [{ resize: { width: 512 } }], {
-          compress: 0.6,
+        const small = await ImageManipulator.manipulateAsync(photo.uri, [{ resize: { width: 384 } }], {
+          compress: 0.55,
           format: ImageManipulator.SaveFormat.JPEG,
           base64: true,
         });
         base64 = small.base64 ?? null;
       }
-      if (!base64 || !recordingRef.current) return;
-      const res = await api.signFrame(base64, lang, detectedRef.current);
+      if (base64 && recordingRef.current) frameBufferRef.current.push(base64);
+    } catch (e) {
+      console.warn("frame", e);
+    } finally {
+      frameBusyRef.current = false;
+    }
+  };
+
+  /** Send the ordered burst to the vision model once enough frames are buffered (runs independently of capture). */
+  const analyzeBurst = async () => {
+    if (!recordingRef.current || analyzeBusyRef.current) return;
+    if (frameBufferRef.current.length < Math.min(3, BURST_SIZE)) return;
+    analyzeBusyRef.current = true;
+    const frames = frameBufferRef.current.slice(0, BURST_SIZE);
+    frameBufferRef.current = [];
+    try {
+      const res = await api.signFrame(frames, lang, detectedRef.current);
       if (!recordingRef.current) return;
       setLiveSign(res);
       const last = detectedRef.current[detectedRef.current.length - 1];
@@ -101,16 +121,21 @@ export default function Translator() {
         Haptics.selectionAsync().catch(() => {});
       }
     } catch (e) {
-      console.warn("frame", e);
+      console.warn("burst", e);
     } finally {
-      frameBusyRef.current = false;
+      analyzeBusyRef.current = false;
     }
   };
+
+  const analyzeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopFrameLoop = () => {
     recordingRef.current = false;
     if (frameTimerRef.current) clearInterval(frameTimerRef.current);
+    if (analyzeTimerRef.current) clearInterval(analyzeTimerRef.current);
     frameTimerRef.current = null;
+    analyzeTimerRef.current = null;
+    frameBufferRef.current = [];
   };
 
   useEffect(() => stopFrameLoop, []);
@@ -230,8 +255,9 @@ export default function Translator() {
     setLiveSign(null);
     recordingRef.current = true;
     setRecordingSign(true);
-    analyzeFrame();
-    frameTimerRef.current = setInterval(analyzeFrame, FRAME_INTERVAL_MS);
+    frameBufferRef.current = [];
+    frameTimerRef.current = setInterval(captureFrame, FRAME_INTERVAL_MS);
+    analyzeTimerRef.current = setInterval(analyzeBurst, 300);
   };
 
   const stopRecordSign = async () => {
@@ -440,7 +466,7 @@ export default function Translator() {
           {mode === "sign" ? (
             camPerm?.granted ? (
               <View style={styles.cameraWrap}>
-                <CameraView ref={cameraRef} style={styles.camera} facing="front" testID="camera-view" />
+                <SignCamera ref={cameraRef} recording={recordingSign} />
                 <LinearGradient
                   colors={["transparent", "rgba(13,14,18,0.9)"]}
                   style={styles.scrim}
@@ -459,7 +485,7 @@ export default function Translator() {
                     </Text>
                     {liveSign?.sign ? (
                       <Text style={styles.liveSign} testID="live-sign-value">
-                        {liveSign.sign} · {Math.round(liveSign.confidence * 100)}%
+                        {liveSign.sign} · {Math.round(liveSign.confidence * 100)}%{liveSign.motion === "dynamic" ? " · 🔁" : ""}
                       </Text>
                     ) : (
                       <ActivityIndicator color={colors.brandPrimary} size="small" />
