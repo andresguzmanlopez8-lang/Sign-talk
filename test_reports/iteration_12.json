@@ -1,0 +1,36 @@
+{
+  "summary": "Phase 2 SignBridge (avatar gallery, PATCH avatar_id, text-to-sign MP4/WebM ffmpeg pipeline, byte-range serving, tappable seq chips) fully validated. Backend: 15/15 pytest cases green in /app/backend/tests/test_phase2_avatar_video.py — GET /api/avatars returns 6 items with default_id 'f1' and http image_url; ?gender=male/female each return 3; PATCH /api/auth/profile {avatar_id:'m3'} persists and reflects in /api/auth/me; {avatar_id:'zzz'} → 400; POST /api/translate/text-to-sign {text:'Sol', language:'es'} → 200 with video_url matching ^/api/media/videos/[a-f0-9]{32}\\.mp4$ and avatar_id 'm3'; GET the mp4 → 200 video/mp4 with Accept-Ranges bytes and Content-Length>0; Range: bytes=0-99 → 206 Content-Range bytes 0-99/N Content-Length=100; the .webm twin → 200 video/webm >0 bytes; invalid name 'abc.mp4' → 404; second identical call returns same URL <5s (cached); switching to avatar f2 yields a distinct video_url; English 'Water' also works; sign-to-text ['S','O','L']→'Sol' regression green. Frontend (web preview 390×844, phone 5550002222 OTP 123456): Perfil → avatar-gallery visible with avatar-filter-{all,male,female}; male filter reveals only m1/m2/m3; tapping avatar-m1 shows avatar-selected-m1; navigating away to /translator and back to /profile keeps the selection persisted (PATCH round-trip works). Traductor → mode-voice → text-input 'Luz' → send-btn → rendering-avatar loader appears immediately, then a new bubble with testID video-<id> renders containing a <video> element whose currentSrc ends with .webm and reaches readyState=4 within 2s (no MEDIA error). No anchor/link inside the bubble, URL never changes → the video stays natively embedded. bubble-video-toggle present and tappable. Code-inspect (camera unavailable in headless): translator.tsx lines 505-519 confirm detected-sequence chips are Pressable with testID `seq-chip-${i}` calling `removeDetected(i)` which filters both `detectedRef.current` and setDetectedSigns; hint text uses t.tapChipToRemove.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "TabsLayout _layout.tsx", "issues": ["Bottom tab buttons have no testID/tabBarTestID; testing had to navigate via direct URLs (/profile, /translator). Consider adding tabBarTestID to each Tabs.Screen for future-proof e2e stability."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase2_avatar_video.py",
+    "/app/test_reports/pytest/phase2_avatar_video.xml"
+  ],
+  "action_items": [
+    "Optional: add tabBarTestID='tab-profile' / 'tab-translator' etc. on Tabs.Screen options so agents can tap tabs directly without falling back to /profile URLs."
+  ],
+  "critical_code_review_comments": [
+    "server.py:308-339 _render_sign_video: solid — validates 0 KB on both mp4 and webm; concat -c copy after uniform vf/preset makes cache-friendly deterministic outputs. Cache key hashes language|avatar_id|letters|urls (line 356) which is what makes 'different avatar → different url' correct.",
+    "server.py:362-387 GET /media/videos/{name}: regex-guards the filename, honors Range with proper 206/Content-Range/Content-Length semantics, sets Accept-Ranges on every response — a byte-range player will seek correctly.",
+    "BubbleVideo.tsx swaps .mp4→.webm on Platform.OS==='web' — necessary for Chromium (no H.264) and confirmed by the observed currentSrc ending .webm.",
+    "AvatarGallery.tsx correctly delegates persistence to parent via onSelect(a) and shows a per-card saving spinner; testIDs avatar-{id}, avatar-selected-{id}, avatar-filter-{gender} are all wired.",
+    "translator.tsx:136-140 removeDetected mutates detectedRef.current then setState — order is right so the next captureFrame sees the pruned buffer immediately.",
+    "Minor: server.py imports subprocess/shutil at line 288 (mid-file) — cosmetic, works because Python evaluates top-to-bottom before endpoints are hit."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase2_avatar_video.py (new — 15 tests, all pass in serial run)"
+  ],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "100% of testable web flows (avatar gallery + persistence + text-to-sign video render + inline playback)"},
+  "seed_data_creation": "Test user +52 5550002222 (OTP 123456). Rendered videos cached under /app/backend/media/videos/*.mp4 + *.webm. Avatar id is persisted on the mongo user doc via PATCH /auth/profile.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase 2 is green. Note about pytest.ini: it forces `-n 2 --dist loadscope` xdist. This test file uses module-scoped fixtures and pytest module-level attribute stash (pytest.first_video_url) that requires serial execution; run it with `-n 0` (as configured) or place related tests in the same class (loadscope pins one class to one worker, but pytest module attrs are still per-worker). All 15 tests pass reliably with `-n 0`. If you want it fully parallel-safe, migrate the stash to a shared fixture. Frontend tabs have no testIDs — navigate via /profile, /translator, /dictionary, /learn URLs.",
+  "rca_of_issue": "N/A — feature verified end-to-end. Video pipeline: text → letters → dictionary lookup for gif_url → ffmpeg concat (intro avatar card + one clip per letter GIF, uniform yuv420p/480x480/fps15) → H.264 MP4 + VP8 WebM twin, both validated non-zero. Web player selects .webm via BubbleVideo.tsx due to headless Chromium lacking H.264 — Content-Type headers, Accept-Ranges and 206 responses all correct so seeking works. Cache key = sha256(lang|avatar|letters|urls)[:32] gives the desired 'same input→same URL, different avatar→different URL' behavior."
+}

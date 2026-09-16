@@ -150,3 +150,7 @@
 
 ## Iteration 13 — main agent (Phase 1 perf + sequence recognition)
 - SignCamera memo component (autofocus off while recording). Capture 400ms sampling → buffer → bursts of 3-4 ordered frames → POST /api/translate/sign-frame {frames[], language, previous[]} → {sign, confidence, motion, frames_analyzed}. Fixtures: /app/backend/tests/fixtures/asl_{b,l,y,w}.jpg. Verified: W x4 → W static 0.99; L x3 → L static 0.99; b,l,y → dynamic; frames [] → 422; legacy image_base64 still works.
+
+## Iteration 14 — main agent (Phase 2)
+- GET /api/avatars (6 items, gender filter), PATCH /api/auth/profile {avatar_id} (400 unknown). text-to-sign → video_url /api/media/videos/<32hex>.mp4 (+ .webm twin), avatar_id; cached; Range requests → 206. Frontend: profile avatar-gallery (avatar-filter-all/male/female, avatar-<id>, avatar-selected-<id>), bubble video-<msgId> (bubble-video-toggle, bubble-video-loading), rendering-avatar loader, seq-chip-<i> removable.
+- Dictionary letter GIF URLs re-seeded to lifeprint /fingerspelling/abc-gifs/.

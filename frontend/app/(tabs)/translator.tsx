@@ -17,14 +17,16 @@ import { useAudioPlayer, useAudioRecorder, AudioModule, RecordingPresets, setAud
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { api } from "@/src/api";
 import { colors, spacing, radius } from "@/src/theme";
 import { useLang } from "@/src/lang";
+import { usePremium } from "@/src/premium";
 import { exportChatPdf } from "@/src/exportChat";
 import ContactPicker from "@/src/components/ContactPicker";
 import { SignCamera } from "@/src/components/SignCamera";
+import BubbleVideo from "@/src/components/BubbleVideo";
 import PhraseSheet from "@/src/components/PhraseSheet";
 import StreakBanner from "@/src/components/StreakBanner";
 
@@ -38,6 +40,8 @@ type Msg = {
   translated_text: string;
   sign_sequence?: string[] | null;
   audio_url?: string | null;
+  video_url?: string | null;
+  avatar_id?: string | null;
   created_at: string;
 };
 
@@ -48,7 +52,13 @@ const ASL_GIF = (letter: string) =>
 
 export default function Translator() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const { t, lang, setLang } = useLang();
+  const { status: premium, isPremium, notifyMessageSent, refresh: refreshPremium } = usePremium();
+  const recordLimit = premium.limits.sign_record_seconds;
+  const [elapsed, setElapsed] = useState(0);
+  const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stopRef = useRef<(auto?: boolean) => Promise<void>>(async () => {});
   const [messages, setMessages] = useState<Msg[]>([]);
   const [mode, setMode] = useState<Mode>("sign");
   const [camPerm, requestCamPerm] = useCameraPermissions();
@@ -129,12 +139,21 @@ export default function Translator() {
 
   const analyzeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  /** Remove a wrongly detected sign before the sentence is composed. */
+  const removeDetected = (index: number) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    detectedRef.current = detectedRef.current.filter((_, i) => i !== index);
+    setDetectedSigns(detectedRef.current);
+  };
+
   const stopFrameLoop = () => {
     recordingRef.current = false;
     if (frameTimerRef.current) clearInterval(frameTimerRef.current);
     if (analyzeTimerRef.current) clearInterval(analyzeTimerRef.current);
+    if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
     frameTimerRef.current = null;
     analyzeTimerRef.current = null;
+    elapsedTimerRef.current = null;
     frameBufferRef.current = [];
   };
 
@@ -148,6 +167,7 @@ export default function Translator() {
     setAudioModeAsync({ playsInSilentMode: true }).catch(() => {});
     AudioModule.requestRecordingPermissionsAsync().catch(() => {});
     loadMessages();
+    refreshPremium();
   }, []);
 
   useFocusEffect(
@@ -193,6 +213,7 @@ export default function Translator() {
       const msg = await api.textToSign(phrase, lang);
       setMessages((prev) => [...prev, msg]);
       setAvatarSeq(msg.sign_sequence ?? null);
+      notifyMessageSent();
     } catch (e) {
       console.warn(e);
     } finally {
@@ -258,16 +279,28 @@ export default function Translator() {
     frameBufferRef.current = [];
     frameTimerRef.current = setInterval(captureFrame, FRAME_INTERVAL_MS);
     analyzeTimerRef.current = setInterval(analyzeBurst, 300);
+    // Plan limit: free 15 s / premium 60 s — auto-stop when reached.
+    setElapsed(0);
+    const startedAt = Date.now();
+    elapsedTimerRef.current = setInterval(() => {
+      const s = Math.floor((Date.now() - startedAt) / 1000);
+      setElapsed(s);
+      if (s >= recordLimit && recordingRef.current) stopRef.current(true);
+    }, 500);
   };
 
-  const stopRecordSign = async () => {
+  const stopRecordSign = async (auto = false) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     stopFrameLoop();
     setRecordingSign(false);
     setLiveSign(null);
     const signs = detectedRef.current;
+    const showLimitPaywall = () => {
+      if (auto && !isPremium) router.push({ pathname: "/paywall", params: { reason: "limit" } });
+    };
     if (signs.length === 0) {
       showToast(t.noSignDetected);
+      showLimitPaywall();
       return;
     }
     setLoading(true);
@@ -275,6 +308,7 @@ export default function Translator() {
       const msg = await api.signToText(lang, signs);
       setMessages((prev) => [...prev, msg]);
       setDetectedSigns([]);
+      notifyMessageSent();
       try {
         const tts = await api.tts(msg.translated_text, lang === "es" ? "nova" : "alloy");
         playAudio(`${api.base}${tts.url}`);
@@ -285,8 +319,10 @@ export default function Translator() {
     } finally {
       setLoading(false);
       scrollToEnd();
+      showLimitPaywall();
     }
   };
+  stopRef.current = stopRecordSign;
 
   const startRecordVoice = async () => {
     try {
@@ -310,6 +346,7 @@ export default function Translator() {
         const msg = await api.voiceToText(uri, lang);
         setMessages((prev) => [...prev, msg]);
         setAvatarSeq(msg.sign_sequence ?? null);
+        notifyMessageSent();
       }
     } catch (e) {
       console.warn("stop rec", e);
@@ -327,6 +364,7 @@ export default function Translator() {
       setMessages((prev) => [...prev, msg]);
       setAvatarSeq(msg.sign_sequence ?? null);
       setText("");
+      notifyMessageSent();
     } catch (e) {
       console.warn(e);
     } finally {
@@ -371,6 +409,7 @@ export default function Translator() {
         {item.original_text && item.original_text !== item.translated_text && (
           <Text style={styles.bubbleMeta}>{item.original_text}</Text>
         )}
+        {item.video_url && <BubbleVideo uri={`${api.base}${item.video_url}`} testID={`video-${item.id}`} />}
         <Text style={styles.bubbleText}>{item.translated_text}</Text>
         <View style={styles.bubbleActions}>
           {!isSign && item.sign_sequence && item.sign_sequence.length > 0 && (
@@ -473,9 +512,9 @@ export default function Translator() {
                   pointerEvents="none"
                 />
                 {recordingSign && (
-                  <View style={styles.recBadge}>
+                  <View style={[styles.recBadge, recordLimit - elapsed <= 5 && styles.recBadgeWarn]} testID="rec-timer">
                     <View style={styles.recDot} />
-                    <Text style={styles.recText}>{t.recording}</Text>
+                    <Text style={styles.recText}>{t.recording} {elapsed}s / {recordLimit}s</Text>
                   </View>
                 )}
                 {recordingSign && (
@@ -490,12 +529,19 @@ export default function Translator() {
                     ) : (
                       <ActivityIndicator color={colors.brandPrimary} size="small" />
                     )}
+                    {detectedSigns.length > 0 && <Text style={styles.seqHint}>{t.tapChipToRemove}</Text>}
                     {detectedSigns.length > 0 && (
                       <View style={styles.seqRow} testID="detected-sequence">
-                        {detectedSigns.slice(-8).map((s, i) => (
-                          <View key={`${s}-${i}`} style={styles.seqChip}>
-                            <Text style={styles.seqText}>{s}</Text>
-                          </View>
+                        {detectedSigns.map((s, i) => (
+                          <Pressable
+                            key={`${s}-${i}`}
+                            style={styles.seqChip}
+                            onPress={() => removeDetected(i)}
+                            testID={`seq-chip-${i}`}
+                            accessibilityLabel={`${s} ✕`}
+                          >
+                            <Text style={styles.seqText}>{s} ✕</Text>
+                          </Pressable>
                         ))}
                       </View>
                     )}
@@ -575,6 +621,13 @@ export default function Translator() {
           }
         />
 
+        {loading && mode === "voice" && (
+          <View style={styles.renderingBox} testID="rendering-avatar">
+            <ActivityIndicator color={colors.brandPrimary} size="small" />
+            <Text style={styles.renderingText}>🧍 {t.renderingAvatar}</Text>
+          </View>
+        )}
+
         {/* Bottom controls */}
         <View style={[styles.controls, { paddingBottom: spacing.md }]}>
           <ScrollView
@@ -611,7 +664,7 @@ export default function Translator() {
             <View style={styles.signControls}>
               <Pressable
                 style={[styles.recordBtn, recordingSign && styles.recordBtnActive]}
-                onPress={recordingSign ? stopRecordSign : startRecordSign}
+                onPress={() => (recordingSign ? stopRecordSign() : startRecordSign())}
                 disabled={loading}
                 testID="record-sign-btn"
                 accessibilityLabel={recordingSign ? t.tapToStop : t.tapToRecord}
@@ -707,6 +760,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
   },
   recDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#fff" },
+  recBadgeWarn: { backgroundColor: "rgba(245,158,11,0.95)" },
   recText: { color: "#fff", fontSize: 12, fontWeight: "700" },
   permAsk: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.md, padding: spacing.lg },
   permIcon: { fontSize: 40 },
@@ -792,6 +846,9 @@ const styles = StyleSheet.create({
   seqRow: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 2 },
   seqChip: { backgroundColor: colors.brandPrimary, paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: radius.sm },
   seqText: { color: colors.onBrandPrimary, fontWeight: "800", fontSize: 12 },
+  seqHint: { color: colors.onSurfaceTertiary, fontSize: 10, marginTop: 2 },
+  renderingBox: { flexDirection: "row", alignItems: "center", gap: spacing.sm, alignSelf: "flex-end", backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: spacing.md, marginHorizontal: spacing.lg, marginBottom: spacing.sm, borderWidth: 1, borderColor: colors.border },
+  renderingText: { color: colors.onSurfaceSecondary, fontSize: 12, fontWeight: "700" },
   voiceRow: { flexDirection: "row", gap: spacing.sm, alignItems: "center" },
   textInput: {
     flex: 1,

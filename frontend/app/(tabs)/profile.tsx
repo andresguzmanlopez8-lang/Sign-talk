@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   View,
   Text,
@@ -11,17 +11,20 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api, clearToken } from "@/src/api";
 import { colors, spacing, radius } from "@/src/theme";
 import { useLang } from "@/src/lang";
+import { usePremium } from "@/src/premium";
+import AvatarGallery from "@/src/components/AvatarGallery";
 import { Lang } from "@/src/constants";
 
 export default function Profile() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { t, lang, setLang } = useLang();
+  const { isPremium, status, refresh } = usePremium();
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -40,9 +43,12 @@ export default function Profile() {
     }
   };
 
-  useEffect(() => {
-    load();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      load();
+      refresh();
+    }, [refresh])
+  );
 
   const pickPhoto = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -104,6 +110,25 @@ export default function Profile() {
         </Pressable>
       </View>
 
+      <Pressable
+        style={[styles.premiumCard, isPremium && styles.premiumCardActive]}
+        onPress={() => router.push("/paywall")}
+        testID="profile-premium-card"
+      >
+        <Text style={styles.premiumIcon}>{isPremium ? "👑" : "✨"}</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.premiumTitle}>{isPremium ? t.premium : t.freePlan}</Text>
+          <Text style={styles.premiumDesc}>
+            {isPremium ? `${t.currentPlan}: ${status.plan === "yearly" ? t.planYearly : t.planMonthly}` : t.premiumSubtitle}
+          </Text>
+        </View>
+        {!isPremium && (
+          <View style={styles.upgradePill}>
+            <Text style={styles.upgradeText}>{t.upgrade}</Text>
+          </View>
+        )}
+      </Pressable>
+
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>{t.language}</Text>
         <View style={styles.langRow}>
@@ -124,6 +149,18 @@ export default function Profile() {
             <Text style={[styles.langName, lang === "en" && styles.langNameActive]}>English (ASL)</Text>
           </Pressable>
         </View>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>🧍 {t.avatarGallery}</Text>
+        <Text style={styles.avatarDesc}>{t.avatarDesc}</Text>
+        <AvatarGallery
+          selectedId={user?.avatar_id ?? "f1"}
+          onSelect={async (a) => {
+            const updated = await api.updateProfile({ avatar_id: a.id });
+            setUser(updated);
+          }}
+        />
       </View>
 
       <View style={styles.section}>
@@ -180,6 +217,14 @@ export default function Profile() {
 }
 
 const styles = StyleSheet.create({
+  premiumCard: { marginHorizontal: spacing.lg, flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.lg, borderRadius: radius.lg, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandPrimary },
+  premiumCardActive: { backgroundColor: colors.surfaceSecondary, borderColor: colors.success },
+  premiumIcon: { fontSize: 28 },
+  premiumTitle: { color: colors.onSurface, fontWeight: "800", fontSize: 15 },
+  premiumDesc: { color: colors.onSurfaceTertiary, fontSize: 12, marginTop: 2 },
+  upgradePill: { backgroundColor: colors.brandPrimary, paddingHorizontal: spacing.md, minHeight: 36, borderRadius: radius.pill, justifyContent: "center" },
+  upgradeText: { color: colors.onBrandPrimary, fontWeight: "800", fontSize: 12 },
+  avatarDesc: { color: colors.onSurfaceTertiary, fontSize: 12, marginBottom: spacing.sm },
   container: { flex: 1, backgroundColor: colors.surface },
   header: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
   title: { color: colors.onSurface, fontSize: 22, fontWeight: "800" },

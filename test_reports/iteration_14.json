@@ -1,0 +1,34 @@
+{
+  "summary": "Premium/Paywall iteration validated end-to-end (backend + frontend, web preview 390x844). Backend: 16/16 pytest cases green (billing plans/status, avatars public+free, PATCH profile avatar guard, activate/deactivate test for yearly & monthly, invalid plan 422, unauth 401/403, translate/text-to-sign for both free and premium users). Frontend: login via OTP 123456, Perfil shows 'Plan gratuito' card + 🔒 on m2/m3/f2/f3, tapping avatar-m2 opens /paywall with reason. Paywall renders title 'Desbloquea SignBridge Premium', 6 avatars preview with 4 locks, 3 benefits, plans (yearly preselected with 'Mejor valor' + '7 días de prueba gratis' + $599 MXN), CTA text switches ('Iniciar prueba gratis de 7 días' → 'Suscribirme ahora' on monthly with $79 MXN). Store info modal shows product_id signbridge_premium_monthly and closes. Footer terms/privacy/restore toasts fire. paywall-activate-test → paywall-success modal → close; Perfil then shows 'SignBridge Premium · Plan actual: Anual', no locks, avatar-m2 selectable (avatar-selected-m2 ✓). Reopening /paywall shows paywall-active + paywall-deactivate-test which returns user to free (locks return, card shows 'Plan gratuito'). Regression Chats & Diccionario tabs load. Test users 5550001111 and 5550002222 left NON-premium at the end (final test_zzz cleanup + explicit deactivate).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "paywall router.back()", "issue": "After paywall-success-close, router.back() logs dev warning 'The action GO_BACK was not handled by any navigator' when /paywall is entered directly (no back stack). Non-blocking, but consider router.replace('/(tabs)/profile') or router.canGoBack() guard. Reference: /app/frontend/app/paywall.tsx (paywall-success-close onPress)."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_premium_paywall.py",
+    "/app/test_reports/pytest/premium_paywall.xml"
+  ],
+  "action_items": [
+    "(Optional/nit) In paywall-success-close, guard router.back() with router.canGoBack() and fall back to router.replace('/(tabs)/profile') to avoid the 'GO_BACK not handled' dev warning when /paywall is opened directly.",
+    "Full 10-send ad-interstitial flow was NOT executed end-to-end due to per-message video render time (~5-6s each). AdInterstitial component code path (signbridge_messages_sent counter modulo ad_every_messages=10) reviewed and looks correct; recommend a quick manual verification or a shorter counter for dev."
+  ],
+  "critical_code_review_comments": [
+    "server.py billing endpoints are clean, protected by PREMIUM_DEV_MODE, avatar catalog guards enforced in PATCH /auth/profile.",
+    "PremiumProvider uses AsyncStorage key 'signbridge_premium_status' cache + refresh — good UX for offline first paint.",
+    "Paywall UI: yearly plan preselected via best_value from backend, CTA copy reactive to selected plan.trial_days — matches spec."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_premium_paywall.py (new)"
+  ],
+  "success_rate": {"backend": "100% (16/16)", "frontend": "100% of executed scenarios (ad-interstitial 10-send NOT executed)"},
+  "seed_data_creation": "Used existing dev test phones +52 5550001111 and +52 5550002222 (OTP 123456). Both left NON-premium after tests (test_zzz cleanup + explicit deactivate-test in teardown).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend tests live at /app/backend/tests/test_premium_paywall.py, reusable for regression. AD interstitial full 10-send flow not exercised end-to-end via browser — main agent can spot-check by pre-setting localStorage('signbridge_messages_sent','9') and sending one text-to-sign message. Camera-based sign recording (15s timer badge testID='rec-timer') can only be verified on device/emulator, not headless web.",
+  "rca_of_issue": "N/A — no failures. Only observation: GO_BACK dev warning when /paywall is deep-linked (no back stack). Reproduce: open /paywall directly, activate-test, close success modal → console shows 'action GO_BACK was not handled'. Mitigation: guard with router.canGoBack() or router.replace()."
+}

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Form, Response
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Form, Response, Request
 from fastapi.concurrency import run_in_threadpool
 from twilio.rest import Client as TwilioClient
 from twilio.base.exceptions import TwilioRestException
@@ -119,6 +119,32 @@ class UpdateProfileReq(BaseModel):
     name: Optional[str] = None
     photo_url: Optional[str] = None
     language: Optional[Literal["es", "en"]] = None
+    avatar_id: Optional[str] = None
+
+# ------------------- AVATAR CATALOG -------------------
+# Presenter avatars (male/female styles). Image = DiceBear PNG; used as the identity card of sign videos.
+AVATARS = [
+    {"id": "m1", "gender": "male", "name": "Mateo", "style": "Casual", "seed": "Mateo-signbridge"},
+    {"id": "m2", "gender": "male", "name": "Diego", "style": "Formal", "seed": "Diego-sb"},
+    {"id": "m3", "gender": "male", "name": "Andrés", "style": "Deportivo", "seed": "Andres-sb"},
+    {"id": "f1", "gender": "female", "name": "Sofía", "style": "Casual", "seed": "Sofia-signbridge"},
+    {"id": "f2", "gender": "female", "name": "Valeria", "style": "Formal", "seed": "Valeria-sb"},
+    {"id": "f3", "gender": "female", "name": "Camila", "style": "Deportivo", "seed": "Camila-sb"},
+]
+DEFAULT_AVATAR_ID = "f1"
+# Free plan: only one male + one female presenter. Premium unlocks the whole gallery.
+FREE_AVATAR_IDS = {"m1", "f1"}
+
+def _is_premium(user: Optional[dict]) -> bool:
+    return bool(user and user.get("is_premium"))
+
+def _avatar_view(a: dict, user: Optional[dict] = None) -> dict:
+    return {**{k: v for k, v in a.items() if k != "seed"},
+            "locked": a["id"] not in FREE_AVATAR_IDS and not _is_premium(user),
+            "image_url": f"https://api.dicebear.com/9.x/adventurer/png?seed={a['seed']}&size=256&backgroundColor=ffdfbf,c0aede,b6e3f4"}
+
+def _avatar_by_id(avatar_id: Optional[str]) -> dict:
+    return next((a for a in AVATARS if a["id"] == avatar_id), next(a for a in AVATARS if a["id"] == DEFAULT_AVATAR_ID))
 
 class Message(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -129,6 +155,8 @@ class Message(BaseModel):
     translated_text: str
     sign_sequence: Optional[List[str]] = None  # letters/words to animate
     audio_url: Optional[str] = None
+    video_url: Optional[str] = None  # server-rendered avatar sign video (MP4)
+    avatar_id: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class SignToTextReq(BaseModel):
@@ -172,6 +200,14 @@ async def get_current_user(cred: Optional[HTTPAuthorizationCredentials] = Depend
     if not user:
         raise HTTPException(401, "User not found")
     return user
+
+async def get_optional_user(cred: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> Optional[dict]:
+    if not cred:
+        return None
+    try:
+        return await get_current_user(cred)
+    except HTTPException:
+        return None
 
 # ------------------- AUTH -------------------
 
@@ -249,15 +285,192 @@ async def onboard(req: OnboardReq, user=Depends(get_current_user)):
 @api_router.patch("/auth/profile")
 async def update_profile(req: UpdateProfileReq, user=Depends(get_current_user)):
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    if "avatar_id" in updates and not any(a["id"] == updates["avatar_id"] for a in AVATARS):
+        raise HTTPException(400, "Unknown avatar")
+    if "avatar_id" in updates and updates["avatar_id"] not in FREE_AVATAR_IDS and not _is_premium(user):
+        raise HTTPException(403, "Este avatar es exclusivo de SignBridge Premium")
     if updates:
         await db.users.update_one({"id": user["id"]}, {"$set": updates})
     updated = await db.users.find_one({"id": user["id"]}, {"_id": 0})
     return _user_safe(updated)
 
+@api_router.get("/avatars")
+async def list_avatars(gender: Optional[Literal["male", "female"]] = None, user=Depends(get_optional_user)):
+    items = [_avatar_view(a, user) for a in AVATARS if not gender or a["gender"] == gender]
+    return {"items": items, "default_id": DEFAULT_AVATAR_ID, "free_ids": sorted(FREE_AVATAR_IDS), "is_premium": _is_premium(user)}
+
+# ------------------- BILLING / PREMIUM PLAN -------------------
+# Store products (create these SAME ids in Google Play / App Store). Purchases will be wired through
+# RevenueCat later; until then, PREMIUM_DEV_MODE lets testers activate Premium without paying.
+PREMIUM_PLANS = [
+    {"id": "monthly", "product_id": "signbridge_premium_monthly", "period": "P1M",
+     "price_mxn": 79, "price_usd": 3.99, "trial_days": 0, "best_value": False},
+    {"id": "yearly", "product_id": "signbridge_premium_yearly", "period": "P1Y",
+     "price_mxn": 599, "price_usd": 29.99, "trial_days": 7, "best_value": True},
+]
+FREE_LIMITS = {"sign_record_seconds": 15, "ad_every_messages": 10, "avatars": sorted(FREE_AVATAR_IDS)}
+PREMIUM_LIMITS = {"sign_record_seconds": 60, "ad_every_messages": 0, "avatars": [a["id"] for a in AVATARS]}
+PREMIUM_DEV_MODE = os.environ.get("PREMIUM_DEV_MODE", "false").lower() == "true"
+
+class ActivateTestReq(BaseModel):
+    plan: Literal["monthly", "yearly"] = "yearly"
+
+def _billing_status(user: dict) -> dict:
+    premium = _is_premium(user)
+    return {
+        "is_premium": premium,
+        "plan": user.get("premium_plan"),
+        "premium_since": user.get("premium_since"),
+        "trial_ends_at": user.get("trial_ends_at"),
+        "source": user.get("premium_source"),
+        "limits": PREMIUM_LIMITS if premium else FREE_LIMITS,
+        "dev_mode": PREMIUM_DEV_MODE,
+    }
+
+@api_router.get("/billing/plans")
+async def billing_plans():
+    return {"plans": PREMIUM_PLANS, "free_limits": FREE_LIMITS, "premium_limits": PREMIUM_LIMITS, "dev_mode": PREMIUM_DEV_MODE}
+
+@api_router.get("/billing/status")
+async def billing_status(user=Depends(get_current_user)):
+    return _billing_status(user)
+
+@api_router.post("/billing/activate-test")
+async def billing_activate_test(req: ActivateTestReq, user=Depends(get_current_user)):
+    """Dev/test only: activate Premium without a store purchase (mirrors what the RevenueCat hook will do)."""
+    if not PREMIUM_DEV_MODE:
+        raise HTTPException(403, "Test activation is disabled")
+    plan = next(p for p in PREMIUM_PLANS if p["id"] == req.plan)
+    now = datetime.now(timezone.utc)
+    updates = {"is_premium": True, "premium_plan": plan["id"], "premium_since": now.isoformat(), "premium_source": "test",
+               "trial_ends_at": (now + timedelta(days=plan["trial_days"])).isoformat() if plan["trial_days"] else None}
+    await db.users.update_one({"id": user["id"]}, {"$set": updates})
+    return _billing_status({**user, **updates})
+
+@api_router.post("/billing/deactivate-test")
+async def billing_deactivate_test(user=Depends(get_current_user)):
+    if not PREMIUM_DEV_MODE:
+        raise HTTPException(403, "Test activation is disabled")
+    updates = {"is_premium": False, "premium_plan": None, "premium_since": None, "premium_source": None, "trial_ends_at": None}
+    await db.users.update_one({"id": user["id"]}, {"$set": updates})
+    return _billing_status({**user, **updates})
+
+# ------------------- SIGN VIDEO RENDERING (ffmpeg) -------------------
+
+import subprocess, shutil, urllib.request
+import imageio_ffmpeg
+
+FFMPEG = shutil.which("ffmpeg") or imageio_ffmpeg.get_ffmpeg_exe()
+MEDIA_DIR = ROOT_DIR / "media"
+GIF_CACHE = MEDIA_DIR / "gifs"
+VIDEO_DIR = MEDIA_DIR / "videos"
+for _d in (GIF_CACHE, VIDEO_DIR):
+    _d.mkdir(parents=True, exist_ok=True)
+CLIP_SECONDS = 1.2
+INTRO_SECONDS = 1.2
+MAX_VIDEO_SIGNS = 24
+
+def _download(url: str, dest: Path) -> Path:
+    if not dest.exists() or dest.stat().st_size == 0:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 SignBridge"})
+        with urllib.request.urlopen(req, timeout=20) as r, open(dest, "wb") as f:
+            f.write(r.read())
+    return dest
+
+def _render_sign_video(letters: List[str], gif_urls: List[str], avatar: dict, out_path: Path) -> None:
+    """Compose intro (avatar card) + one clip per sign into a single H.264 MP4. Raises on failure/0 KB."""
+    work = out_path.parent / f"tmp-{out_path.stem}"
+    work.mkdir(exist_ok=True)
+    try:
+        clips: List[Path] = []
+        vf = "scale=480:480:force_original_aspect_ratio=decrease,pad=480:480:(ow-iw)/2:(oh-ih)/2:color=#0D0E12,format=yuv420p,fps=15"
+        avatar_png = _download(_avatar_view(avatar)["image_url"], GIF_CACHE / f"avatar-{avatar['id']}.png")
+        intro = work / "000-intro.mp4"
+        subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-loop", "1", "-t", str(INTRO_SECONDS), "-i", str(avatar_png),
+                        "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", str(intro)], check=True, timeout=60)
+        clips.append(intro)
+        for i, (letter, url) in enumerate(zip(letters, gif_urls), start=1):
+            src = _download(url, GIF_CACHE / f"{hashlib.sha1(url.encode()).hexdigest()}{Path(url).suffix or '.gif'}")
+            clip = work / f"{i:03d}-{letter}.mp4"
+            subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ignore_loop", "0", "-t", str(CLIP_SECONDS), "-i", str(src),
+                            "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-an", str(clip)], check=True, timeout=60)
+            clips.append(clip)
+        concat = work / "list.txt"
+        concat.write_text("".join(f"file '{c}'\n" for c in clips))
+        subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(concat),
+                        "-c", "copy", "-movflags", "+faststart", str(out_path)], check=True, timeout=120)
+        if not out_path.exists() or out_path.stat().st_size == 0:
+            raise RuntimeError("Rendered video is empty (0 KB)")
+        # WebM (VP8) twin for web browsers without H.264 support; native players use the MP4.
+        webm = out_path.with_suffix(".webm")
+        subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(out_path), "-c:v", "libvpx", "-b:v", "400k",
+                        "-deadline", "realtime", "-cpu-used", "8", "-an", str(webm)], check=True, timeout=120)
+        if not webm.exists() or webm.stat().st_size == 0:
+            raise RuntimeError("Rendered webm is empty (0 KB)")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+async def build_sign_video(letters: List[str], language: str, avatar_id: Optional[str], priority: bool = False) -> Optional[str]:
+    """Returns /api/media/videos/<key>.mp4 for the given sign sequence, rendering and caching it on first use.
+    Premium (priority=True) renders immediately; free renders wait in a single-slot queue."""
+    avatar = _avatar_by_id(avatar_id)
+    letters = [l for l in letters if l.isalpha()][:MAX_VIDEO_SIGNS]
+    if not letters:
+        return None
+    entries = await db.dictionary.find({"language": language, "kind": "letter", "label": {"$in": letters}}, {"_id": 0}).to_list(100)
+    by_label = {e["label"]: e for e in entries}
+    urls = []
+    for l in letters:
+        e = by_label.get(l) or by_label.get(l.upper())
+        if e and (e.get("gif_url") or e.get("image_url")):
+            urls.append(e.get("gif_url") or e.get("image_url"))
+    if not urls:
+        return None
+    key = hashlib.sha256(f"{language}|{avatar['id']}|{'|'.join(letters)}|{'|'.join(urls)}".encode()).hexdigest()[:32]
+    out = VIDEO_DIR / f"{key}.mp4"
+    if not out.exists() or out.stat().st_size == 0 or not out.with_suffix(".webm").exists():
+        if priority:
+            await run_in_threadpool(_render_sign_video, letters[: len(urls)], urls, avatar, out)
+        else:
+            async with _free_render_queue:
+                if not out.exists() or out.stat().st_size == 0 or not out.with_suffix(".webm").exists():
+                    await run_in_threadpool(_render_sign_video, letters[: len(urls)], urls, avatar, out)
+    return f"/api/media/videos/{key}.mp4"
+
+import asyncio
+_free_render_queue = asyncio.Semaphore(1)
+
+@api_router.get("/media/videos/{name}")
+async def get_video(name: str, request: Request):
+    if not re.fullmatch(r"[a-f0-9]{32}\.(mp4|webm)", name):
+        raise HTTPException(404, "Not found")
+    path = VIDEO_DIR / name
+    if not path.exists() or path.stat().st_size == 0:
+        raise HTTPException(404, "Not found")
+    media_type = "video/webm" if name.endswith(".webm") else "video/mp4"
+    size = path.stat().st_size
+    headers = {"Cache-Control": "public, max-age=31536000", "Accept-Ranges": "bytes"}
+    range_header = request.headers.get("range")
+    m = re.fullmatch(r"bytes=(\d*)-(\d*)", range_header or "")
+    if m and (m.group(1) or m.group(2)):
+        # Byte-range support so native/web players can seek and probe the file.
+        start = int(m.group(1)) if m.group(1) else max(0, size - int(m.group(2)))
+        end = int(m.group(2)) if m.group(1) and m.group(2) else size - 1
+        end = min(end, size - 1)
+        if start > end or start >= size:
+            raise HTTPException(416, "Range not satisfiable")
+        with open(path, "rb") as f:
+            f.seek(start)
+            chunk = f.read(end - start + 1)
+        headers.update({"Content-Range": f"bytes {start}-{end}/{size}", "Content-Length": str(len(chunk))})
+        return Response(content=chunk, status_code=206, media_type=media_type, headers=headers)
+    headers["Content-Length"] = str(size)
+    return Response(content=path.read_bytes(), media_type=media_type, headers=headers)
+
 # ------------------- DICTIONARY -------------------
 
 # Public GIF sources for sign language alphabets
-ASL_GIF_BASE = "https://www.lifeprint.com/asl101/gifs-animated/"
+ASL_GIF_BASE = "https://www.lifeprint.com/asl101/fingerspelling/abc-gifs/"
 LSM_IMG_BASE = "https://upload.wikimedia.org/wikipedia/commons/thumb"
 
 def _seed_dictionary_data():
@@ -466,6 +679,10 @@ async def seed():
     # UserContacts collection (Contacts Manager) — ensure it exists with its indexes
     await db.UserContacts.create_index([("owner_user_id", 1), ("profileId", 1)])
     await db.UserContacts.create_index([("owner_user_id", 1), ("lastSyncDate", -1)])
+    # Chat 1:1
+    await db.conversations.create_index("key", unique=True)
+    await db.conversations.create_index([("participants", 1), ("updated_at", -1)])
+    await db.chat_messages.create_index([("conversation_id", 1), ("created_at", 1)])
 
 @api_router.get("/dictionary")
 async def get_dictionary(language: Optional[str] = None, q: Optional[str] = None, letter: Optional[str] = None):
@@ -597,6 +814,12 @@ async def sign_to_text(req: SignToTextReq, user=Depends(get_current_user)):
 async def text_to_sign(req: TextToSignReq, user=Depends(get_current_user)):
     # Break input into letters for avatar-like sequence (letters only)
     seq = [c.upper() for c in req.text if c.isalpha()][:60]
+    avatar_id = user.get("avatar_id") or DEFAULT_AVATAR_ID
+    try:
+        video_url = await build_sign_video(seq, req.language, avatar_id, priority=_is_premium(user))
+    except Exception as e:
+        logging.warning(f"Sign video render failed: {e}")
+        raise HTTPException(424, "No se pudo generar el video del avatar. Inténtalo de nuevo.")
     msg = Message(
         user_id=user["id"],
         direction="text_to_sign",
@@ -604,16 +827,14 @@ async def text_to_sign(req: TextToSignReq, user=Depends(get_current_user)):
         original_text=req.text,
         translated_text=req.text,
         sign_sequence=seq,
+        video_url=video_url,
+        avatar_id=avatar_id,
     )
     await db.messages.insert_one(msg.model_dump())
     return msg.model_dump()
 
-@api_router.post("/translate/voice-to-text")
-async def voice_to_text(
-    audio: UploadFile = File(...),
-    language: str = Form("es"),
-    user=Depends(get_current_user),
-):
+async def _transcribe_upload(audio: UploadFile, language: str) -> str:
+    """Validate an uploaded audio file and transcribe it with Whisper."""
     if audio.content_type and audio.content_type.split(";")[0] not in ALLOWED_AUDIO_TYPES:
         raise HTTPException(415, "Unsupported audio type")
     audio_bytes = await audio.read(MAX_AUDIO_BYTES + 1)
@@ -623,7 +844,7 @@ async def voice_to_text(
         raise HTTPException(400, "Audio file is empty")
     try:
         stt = OpenAISpeechToText(api_key=EMERGENT_LLM_KEY)
-        text = await stt.transcribe_audio(
+        return await stt.transcribe_audio(
             audio_bytes=audio_bytes,
             filename=audio.filename or "audio.m4a",
             language="es" if language == "es" else "en",
@@ -632,6 +853,13 @@ async def voice_to_text(
         logging.warning(f"STT error: {e}")
         raise HTTPException(502, "Transcription service unavailable")
 
+@api_router.post("/translate/voice-to-text")
+async def voice_to_text(
+    audio: UploadFile = File(...),
+    language: str = Form("es"),
+    user=Depends(get_current_user),
+):
+    text = await _transcribe_upload(audio, language)
     seq = [c.upper() for c in text if c.isalpha()][:60]
     msg = Message(
         user_id=user["id"],
@@ -1055,6 +1283,229 @@ async def delete_contact(contact_id: str, user=Depends(get_current_user)):
     if res.deleted_count == 0:
         raise HTTPException(404, "Not found")
     return {"success": True}
+
+# ------------------- CHAT 1:1 (Phase 3) -------------------
+# Conversations between two registered users found through the phone's contacts.
+# Every message is stored as TEXT (typed, transcribed voice note, or recognized signs) so the
+# receiver can read it, listen to it (TTS) or watch it as an avatar sign video (rendered lazily).
+
+MAX_MATCH_PHONES = 2000
+
+class MatchPhonesReq(BaseModel):
+    phones: List[str] = Field(default_factory=list, max_length=MAX_MATCH_PHONES)
+
+class NewConversationReq(BaseModel):
+    peer_id: Optional[str] = Field(default=None, max_length=64)
+    phone: Optional[str] = Field(default=None, max_length=40)
+
+class ChatSendReq(BaseModel):
+    kind: Literal["text", "sign"] = "text"
+    text: Optional[str] = Field(default=None, max_length=500)
+    signs: List[str] = Field(default_factory=list, max_length=120)
+    language: Literal["es", "en"] = "es"
+
+def _phone_digits(p: Optional[str]) -> str:
+    return re.sub(r"\D", "", p or "")
+
+def _phones_match(a: str, b: str) -> bool:
+    """Same number ignoring formatting/country prefix: compare the last (up to) 10 digits."""
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    tail = min(len(a), len(b), 10)
+    return tail >= 7 and a[-tail:] == b[-tail:]
+
+def _iso(dt) -> Optional[str]:
+    if dt is None:
+        return None
+    if isinstance(dt, str):
+        return dt
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
+
+def _peer_view(u: Optional[dict]) -> Optional[dict]:
+    if not u:
+        return None
+    return {"id": u["id"], "name": u.get("name") or u["phone"], "phone": u["phone"],
+            "photo_url": u.get("photo_url"), "avatar_id": u.get("avatar_id") or DEFAULT_AVATAR_ID}
+
+def _chat_msg_view(m: dict) -> dict:
+    return {**{k: v for k, v in m.items() if k != "_id"}, "created_at": _iso(m.get("created_at"))}
+
+async def _find_user_by_phone(phone: str) -> Optional[dict]:
+    d = _phone_digits(phone)
+    if len(d) < 7:
+        raise HTTPException(400, "Número de teléfono inválido")
+    users = await db.users.find({}, {"_id": 0, "id": 1, "name": 1, "phone": 1, "photo_url": 1, "avatar_id": 1}).to_list(5000)
+    return next((u for u in users if _phones_match(_phone_digits(u["phone"]), d)), None)
+
+@api_router.post("/chat/match")
+async def chat_match(req: MatchPhonesReq, user=Depends(get_current_user)):
+    """Which of the given phone numbers (device contacts) belong to registered SignBridge users."""
+    wanted = {}
+    for p in req.phones:
+        d = _phone_digits(p)
+        if len(d) >= 7:
+            wanted.setdefault(d, p)
+    if not wanted:
+        return {"items": []}
+    users = await db.users.find({"id": {"$ne": user["id"]}}, {"_id": 0, "id": 1, "name": 1, "phone": 1, "photo_url": 1, "avatar_id": 1}).to_list(5000)
+    items = []
+    for u in users:
+        ud = _phone_digits(u["phone"])
+        for d, raw in wanted.items():
+            if _phones_match(ud, d):
+                items.append({**_peer_view(u), "matched_phone": raw})
+                break
+    return {"items": items}
+
+async def _get_or_create_conversation(me_id: str, peer_id: str) -> dict:
+    key = "|".join(sorted([me_id, peer_id]))
+    conv = await db.conversations.find_one({"key": key}, {"_id": 0})
+    if not conv:
+        now = datetime.now(timezone.utc)
+        conv = {"id": str(uuid.uuid4()), "key": key, "participants": sorted([me_id, peer_id]),
+                "created_at": now, "updated_at": now, "last_message": None, "last_read": {}}
+        await db.conversations.insert_one(conv)
+        conv.pop("_id", None)
+    return conv
+
+async def _conversation_view(conv: dict, me_id: str) -> dict:
+    peer_id = next((p for p in conv["participants"] if p != me_id), None)
+    peer = await db.users.find_one({"id": peer_id}, {"_id": 0}) if peer_id else None
+    last_read = (conv.get("last_read") or {}).get(me_id)
+    q = {"conversation_id": conv["id"], "sender_id": {"$ne": me_id}}
+    if last_read:
+        q["created_at"] = {"$gt": last_read}
+    unread = await db.chat_messages.count_documents(q)
+    last = conv.get("last_message")
+    if last:
+        last = {**last, "created_at": _iso(last.get("created_at"))}
+    return {"id": conv["id"], "peer": _peer_view(peer), "last_message": last,
+            "unread_count": unread, "updated_at": _iso(conv.get("updated_at"))}
+
+async def _conv_for(cid: str, user_id: str) -> dict:
+    conv = await db.conversations.find_one({"id": cid, "participants": user_id}, {"_id": 0})
+    if not conv:
+        raise HTTPException(404, "Conversation not found")
+    return conv
+
+@api_router.post("/chat/conversations")
+async def open_conversation(req: NewConversationReq, user=Depends(get_current_user)):
+    peer = None
+    if req.peer_id:
+        peer = await db.users.find_one({"id": req.peer_id}, {"_id": 0})
+    elif req.phone:
+        peer = await _find_user_by_phone(req.phone)
+    else:
+        raise HTTPException(400, "peer_id or phone required")
+    if not peer:
+        raise HTTPException(404, "Este número aún no está registrado en SignBridge")
+    if peer["id"] == user["id"]:
+        raise HTTPException(400, "No puedes chatear contigo mismo")
+    conv = await _get_or_create_conversation(user["id"], peer["id"])
+    return await _conversation_view(conv, user["id"])
+
+@api_router.get("/chat/conversations")
+async def list_conversations(user=Depends(get_current_user)):
+    convs = await db.conversations.find({"participants": user["id"]}, {"_id": 0}).sort("updated_at", -1).to_list(200)
+    return [await _conversation_view(c, user["id"]) for c in convs]
+
+@api_router.get("/chat/conversations/{cid}/messages")
+async def chat_messages(cid: str, after: Optional[str] = None, user=Depends(get_current_user)):
+    """Messages of a conversation (oldest first). `after` (ISO) returns only newer ones → used for polling.
+    Reading marks the conversation as read for the caller."""
+    conv = await _conv_for(cid, user["id"])
+    q = {"conversation_id": cid}
+    if after:
+        try:
+            dt = datetime.fromisoformat(after.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(400, "Invalid 'after' timestamp")
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        q["created_at"] = {"$gt": dt}
+        items = await db.chat_messages.find(q, {"_id": 0}).sort("created_at", 1).to_list(300)
+    else:
+        items = await db.chat_messages.find(q, {"_id": 0}).sort("created_at", -1).limit(200).to_list(200)
+        items.reverse()
+    now = datetime.now(timezone.utc)
+    await db.conversations.update_one({"id": cid}, {"$set": {f"last_read.{user['id']}": now}})
+    peer_id = next((p for p in conv["participants"] if p != user["id"]), None)
+    peer = await db.users.find_one({"id": peer_id}, {"_id": 0}) if peer_id else None
+    return {"items": [_chat_msg_view(m) for m in items], "peer": _peer_view(peer), "me": user["id"], "server_time": _iso(now)}
+
+async def _insert_chat_message(conv: dict, sender: dict, kind: str, text: str, language: str, signs: Optional[List[str]] = None) -> dict:
+    now = datetime.now(timezone.utc)
+    msg = {
+        "id": str(uuid.uuid4()),
+        "conversation_id": conv["id"],
+        "sender_id": sender["id"],
+        "kind": kind,  # text | voice | sign (how the SENDER produced it)
+        "text": text,
+        "language": language,
+        "signs": signs,
+        "video_url": None,  # avatar sign video, rendered on demand
+        "avatar_id": sender.get("avatar_id") or DEFAULT_AVATAR_ID,
+        "created_at": now,
+    }
+    await db.chat_messages.insert_one(msg)
+    preview = {"text": text[:120], "kind": kind, "sender_id": sender["id"], "created_at": now}
+    await db.conversations.update_one(
+        {"id": conv["id"]},
+        {"$set": {"updated_at": now, "last_message": preview, f"last_read.{sender['id']}": now}},
+    )
+    return _chat_msg_view(msg)
+
+@api_router.post("/chat/conversations/{cid}/messages")
+async def chat_send(cid: str, req: ChatSendReq, user=Depends(get_current_user)):
+    conv = await _conv_for(cid, user["id"])
+    if req.kind == "sign":
+        text = _compose_sentence(req.signs, req.language)
+        if not text:
+            raise HTTPException(422, "No signs detected")
+        return await _insert_chat_message(conv, user, "sign", text, req.language, [s.strip() for s in req.signs if s.strip()])
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(422, "Empty message")
+    return await _insert_chat_message(conv, user, "text", text, req.language)
+
+@api_router.post("/chat/conversations/{cid}/voice")
+async def chat_send_voice(
+    cid: str,
+    audio: UploadFile = File(...),
+    language: str = Form("es"),
+    user=Depends(get_current_user),
+):
+    """Voice note → Whisper transcript stored as the message text."""
+    conv = await _conv_for(cid, user["id"])
+    text = (await _transcribe_upload(audio, language)).strip()
+    if not text:
+        raise HTTPException(422, "No se entendió la nota de voz")
+    return await _insert_chat_message(conv, user, "voice", text, "es" if language == "es" else "en")
+
+@api_router.post("/chat/messages/{mid}/sign-video")
+async def chat_sign_video(mid: str, user=Depends(get_current_user)):
+    """Render (once) the avatar sign video of a message, presented by the sender's avatar."""
+    msg = await db.chat_messages.find_one({"id": mid}, {"_id": 0})
+    if not msg:
+        raise HTTPException(404, "Message not found")
+    await _conv_for(msg["conversation_id"], user["id"])
+    if msg.get("video_url"):
+        return _chat_msg_view(msg)
+    seq = [c.upper() for c in msg["text"] if c.isalpha()][:60]
+    try:
+        video_url = await build_sign_video(seq, msg["language"], msg.get("avatar_id"), priority=_is_premium(user))
+    except Exception as e:
+        logging.warning(f"Chat sign video render failed: {e}")
+        raise HTTPException(424, "No se pudo generar el video del avatar. Inténtalo de nuevo.")
+    if not video_url:
+        raise HTTPException(422, "Este mensaje no tiene letras para mostrar en señas")
+    await db.chat_messages.update_one({"id": mid}, {"$set": {"video_url": video_url}})
+    msg["video_url"] = video_url
+    return _chat_msg_view(msg)
 
 # ------------------- TTS -------------------
 

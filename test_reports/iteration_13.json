@@ -1,0 +1,30 @@
+{
+  "summary": "Phase 3 (1-to-1 Chat) tested end-to-end. Backend: 25/25 pytest cases passed in /app/backend/tests/test_chat_phase3.py covering /api/chat/match (last-10-digit dedupe, excludes self, unauth), /api/chat/conversations (POST idempotent same id for A→B and B→A, 400 self, 404 unregistered, 401 unauth; GET list with peer/unread/updated_at), /api/chat/conversations/{cid}/messages (empty→422, kind=text OK, kind=sign composes ['H','O','L','A','gracias'] into 'Hola gracias', empty signs→422, mark-read → unread_count 0 for B, unread increments for A after B's reply, ?after=ISO polling returns only newer, invalid after→400, 404 for outsider, 401 unauth), /voice (415 non-audio, 400 empty), /sign-video (renders /api/media/videos/<sha>.mp4, cached same url on 2nd call, .mp4/.webm both served 200/206, 404 for outsider). Frontend (mobile 390x844, web preview): logged in A (+525550001111) → Chats tab visible (chats-title). '+ Nuevo chat' → new-chat screen → unregistered 9998887777 shows expected error 'Este número aún no está registrado en SignBridge' (new-chat-error). Typing 5550002222 + go navigates to /chat/[id] with chat-peer-name='Tester'. Sent 'Hola desde A' → bubble on right (left=95.6, right=374 in vw=390), Escuchar/Ver en señas buttons present. Tapping 'Ver en señas' shows chat-video-<id> inline after render. 'Escuchar' TTS clicked without error. 👐 chat-sign-btn opens sign-capture-sheet and sign-sheet-close dismisses it (no crash). User B (+525550002222) logged in second context → Chats shows conversation with unread badge (unread-<cid>). Opening it renders A's messages on the left (left=16). B replies 'Hola A, soy B' → A's open chat screen picks it up via 2.5s polling within ~3s without reload (A_msgs_after_B_reply went 6→7, texts include the new message). Regression smoke: translator-title testID rendered on A immediately after login (Traductor tab default landing); Chats/Diccionario/Aprender/Perfil tabs all visible in bottom bar with translator icon 🔄 and chats 💬.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_chat_phase3.py",
+    "/app/test_reports/pytest/chat_phase3.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is ~1490 lines — recommend splitting into routers (auth/chat/media/dict) for maintainability, not blocking this iteration.",
+    "chat_send_voice validates non-audio via Content-Type and empty via body length in _transcribe_upload — behavior verified but consider centralizing this validation to reuse across future upload endpoints."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_chat_phase3.py (new)"
+  ],
+  "success_rate": {"backend": "100% (25/25)", "frontend": "100% (all Phase 3 UI flows: chats tab, new-chat manual, unregistered error, bubbles side, Ver en señas video render, Escuchar TTS, unread badge, cross-context live polling, SignCaptureSheet open/close)"},
+  "seed_data_creation": "Used dev-bypass test numbers +525550001111 / +525550002222 / +525550003333 with OTP 123456 (already in backend/.env OTP_TEST_NUMBERS). No manual seed created; users are auto-created on first verify-otp. Conversations/messages persisted in Mongo test_database as part of test flow (prefixed content 'TEST' not used but data volumes are small; acceptable per pytest.ini shared preview convention).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase 3 chat backend+frontend passed cleanly. Use test_chat_phase3.py as regression. Note: pytest is configured with -n 2 --dist loadscope (see /app/backend/pytest.ini) — for serial runs use -n 0 (NOT -p no:xdist). Login flow testIDs on web: phone-input, send-otp-button, otp-0..otp-5, name-input, continue-btn. Bottom tab navigation uses text labels ('Traductor','Chats','Diccionario','Aprender','Perfil') — no per-tab testIDs. Chat screen testIDs verified live: chats-title, chats-empty, new-chat-btn/empty-new-chat, new-chat-phone, new-chat-phone-go, new-chat-error, chat-peer-name, chat-input, chat-send-btn, chat-sign-btn, chat-msg-<id>, chat-text-<id>, chat-listen-<id>, chat-sign-<id>, chat-video-<id>, sign-capture-sheet, sign-sheet-close, conversation-<cid>, unread-<cid>. Live polling interval is 2.5s in /chat/[id].tsx and 4s in chats tab list."
+}

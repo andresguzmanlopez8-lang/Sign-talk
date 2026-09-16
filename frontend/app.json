@@ -72,7 +72,8 @@
           "photosPermission": "Allow SignBridge to access your photos for profile picture."
         }
       ],
-      "expo-sharing"
+      "expo-sharing",
+      "expo-video"
     ],
     "experiments": {
       "typedRoutes": true

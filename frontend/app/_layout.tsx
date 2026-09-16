@@ -11,6 +11,7 @@ import { queryClient } from "@/src/query-client";
 import { LangContext } from "@/src/lang";
 import { Lang } from "@/src/constants";
 import { colors } from "@/src/theme";
+import { PremiumProvider } from "@/src/premium";
 
 LogBox.ignoreAllLogs(true);
 
@@ -36,14 +37,18 @@ export default function RootLayout() {
         <SafeAreaProvider>
           <QueryClientProvider client={queryClient}>
             <LangContext.Provider value={{ lang, setLang }}>
-              <StatusBar barStyle="light-content" backgroundColor={colors.surface} />
-              <Stack
-                screenOptions={{
-                  headerShown: false,
-                  contentStyle: { backgroundColor: colors.surface },
-                  animation: "fade",
-                }}
-              />
+              <PremiumProvider>
+                <StatusBar barStyle="light-content" backgroundColor={colors.surface} />
+                <Stack
+                  screenOptions={{
+                    headerShown: false,
+                    contentStyle: { backgroundColor: colors.surface },
+                    animation: "fade",
+                  }}
+                >
+                  <Stack.Screen name="paywall" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+                </Stack>
+              </PremiumProvider>
             </LangContext.Provider>
           </QueryClientProvider>
         </SafeAreaProvider>

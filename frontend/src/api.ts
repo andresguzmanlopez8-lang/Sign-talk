@@ -114,5 +114,29 @@ export const api = {
   viewContact: (payload: { profileId?: string; displayName: string; profileImageUrl?: string | null; phone?: string | null }) =>
     request<{ contact: any; created: boolean; message: string | null }>("/contacts/view", { method: "POST", body: payload }),
   contacts: () => request<any[]>("/contacts"),
+  avatars: () => request<{ items: any[]; default_id: string; free_ids: string[]; is_premium: boolean }>("/avatars"),
   deleteContact: (id: string) => request<any>(`/contacts/${id}`, { method: "DELETE" }),
+  // Chat 1:1
+  chatMatch: (phones: string[]) => request<{ items: any[] }>("/chat/match", { method: "POST", body: { phones } }),
+  conversations: () => request<any[]>("/chat/conversations"),
+  openConversation: (payload: { peer_id?: string; phone?: string }) =>
+    request<any>("/chat/conversations", { method: "POST", body: payload }),
+  chatMessages: (cid: string, after?: string | null) =>
+    request<{ items: any[]; peer: any; me: string; server_time: string }>(
+      `/chat/conversations/${cid}/messages${after ? `?after=${encodeURIComponent(after)}` : ""}`
+    ),
+  chatSend: (cid: string, payload: { kind: "text" | "sign"; text?: string; signs?: string[]; language: "es" | "en" }) =>
+    request<any>(`/chat/conversations/${cid}/messages`, { method: "POST", body: payload }),
+  chatSendVoice: async (cid: string, audioUri: string, language: "es" | "en") => {
+    const form = new FormData();
+    form.append("language", language);
+    form.append("audio", { uri: audioUri, name: "recording.m4a", type: "audio/m4a" } as any);
+    return request<any>(`/chat/conversations/${cid}/voice`, { method: "POST", form });
+  },
+  chatSignVideo: (mid: string) => request<any>(`/chat/messages/${mid}/sign-video`, { method: "POST" }),
+  // Billing / Premium
+  billingPlans: () => request<{ plans: any[]; free_limits: any; premium_limits: any; dev_mode: boolean }>("/billing/plans", { auth: false }),
+  billingStatus: () => request<any>("/billing/status"),
+  activatePremiumTest: (plan: "monthly" | "yearly") => request<any>("/billing/activate-test", { method: "POST", body: { plan } }),
+  deactivatePremiumTest: () => request<any>("/billing/deactivate-test", { method: "POST" }),
 };

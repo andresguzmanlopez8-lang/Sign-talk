@@ -37,6 +37,13 @@ export default function TabsLayout() {
         name="translator"
         options={{
           title: t.translator,
+          tabBarIcon: ({ focused }) => <TabIcon label="🔄" focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
+        name="chats"
+        options={{
+          title: t.chats,
           tabBarIcon: ({ focused }) => <TabIcon label="💬" focused={focused} />,
         }}
       />
