@@ -11,6 +11,7 @@ import logging
 import hashlib
 import re
 import json
+import base64
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -297,7 +298,23 @@ async def update_profile(req: UpdateProfileReq, user=Depends(get_current_user)):
 @api_router.get("/avatars")
 async def list_avatars(gender: Optional[Literal["male", "female"]] = None, user=Depends(get_optional_user)):
     items = [_avatar_view(a, user) for a in AVATARS if not gender or a["gender"] == gender]
-    return {"items": items, "default_id": DEFAULT_AVATAR_ID, "free_ids": sorted(FREE_AVATAR_IDS), "is_premium": _is_premium(user)}
+    interpreters = [{**i, "image_url": f"/api/media/interpreters/{i['id']}.png", "clips": len(clips.CLIPS.get(i["language"], {}))}
+                    for i in clips.INTERPRETERS]
+    return {"items": items, "default_id": DEFAULT_AVATAR_ID, "free_ids": sorted(FREE_AVATAR_IDS), "is_premium": _is_premium(user),
+            "interpreters": interpreters}
+
+@api_router.get("/media/interpreters/{interp_id}.png")
+async def get_interpreter_thumbnail(interp_id: str):
+    interp = next((i for i in clips.INTERPRETERS if i["id"] == interp_id), None)
+    if not interp:
+        raise HTTPException(404, "Not found")
+    url = clips.CLIPS[interp["language"]][interp["preview_key"]]
+    try:
+        thumb = await run_in_threadpool(_clip_thumbnail, url)
+    except Exception as e:
+        logging.warning(f"Interpreter thumbnail failed: {e}")
+        raise HTTPException(502, "Thumbnail unavailable")
+    return Response(content=thumb.read_bytes(), media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
 
 # ------------------- BILLING / PREMIUM PLAN -------------------
 # Store products (create these SAME ids in Google Play / App Store). Purchases will be wired through
@@ -361,6 +378,7 @@ import subprocess, shutil, urllib.request
 import imageio_ffmpeg
 import avatar2d
 import gestures
+import clips
 
 FFMPEG = shutil.which("ffmpeg") or imageio_ffmpeg.get_ffmpeg_exe()
 MEDIA_DIR = ROOT_DIR / "media"
@@ -377,27 +395,85 @@ def _download(url: str, dest: Path) -> Path:
             f.write(r.read())
     return dest
 
-def _render_sign_video(tokens: List[avatar2d.Token], avatar: dict, out_path: Path) -> None:
-    """Render the 2D full-body avatar frames for the whole message and encode ONE continuous MP4 (+ WebM twin)."""
-    work = out_path.parent / f"tmp-{out_path.stem}"
+SEG_DIR = MEDIA_DIR / "segments"
+CLIP_DIR = MEDIA_DIR / "clips"
+for _d in (SEG_DIR, CLIP_DIR):
+    _d.mkdir(parents=True, exist_ok=True)
+# Every segment is encoded with IDENTICAL parameters so the final message video is a lossless concat.
+SEG_VF = "scale=480:480:force_original_aspect_ratio=decrease,pad=480:480:(ow-iw)/2:(oh-ih)/2:color=0x0d0e12,fps=15,format=yuv420p"
+SEG_ENC = ["-c:v", "libx264", "-preset", "veryfast", "-profile:v", "baseline", "-level", "3.0", "-pix_fmt", "yuv420p", "-an"]
+MAX_CLIP_SECONDS = 4
+
+def _ffmpeg(args: List[str], timeout: int = 180) -> None:
+    subprocess.run([FFMPEG, "-y", "-loglevel", "error", *args], check=True, timeout=timeout)
+
+def _valid(path: Path) -> bool:
+    return path.exists() and path.stat().st_size > 0
+
+def _clip_segment(url: str) -> Path:
+    """Real interpreter clip (GIF/MP4 from an educational source) → normalized 480x480 H.264 segment (cached)."""
+    key = hashlib.sha1(url.encode()).hexdigest()
+    seg = SEG_DIR / f"clip-{key}.mp4"
+    if _valid(seg):
+        return seg
+    src = _download(url, CLIP_DIR / f"{key}{Path(url).suffix or '.gif'}")
+    _ffmpeg(["-ignore_loop", "0", "-t", str(MAX_CLIP_SECONDS), "-i", str(src), "-vf", SEG_VF, *SEG_ENC, str(seg)])
+    if not _valid(seg):
+        raise RuntimeError(f"Clip segment empty for {url}")
+    return seg
+
+def _clip_thumbnail(url: str) -> Path:
+    key = hashlib.sha1(url.encode()).hexdigest()
+    thumb = CLIP_DIR / f"thumb-{key}.png"
+    if not _valid(thumb):
+        _ffmpeg(["-i", str(_clip_segment(url)), "-ss", "0.6", "-frames:v", "1", str(thumb)], timeout=60)
+    return thumb
+
+def _avatar_segment(token: avatar2d.Token, avatar: dict) -> Path:
+    """2D full-body avatar fallback for a single sign (cached per sign + presenter)."""
+    key = hashlib.sha1(f"v3|{avatar['id']}|{token.kind}|{token.label}|{token.handshape.name if token.handshape else '-'}".encode()).hexdigest()
+    seg = SEG_DIR / f"av-{key}.mp4"
+    if _valid(seg):
+        return seg
+    work = SEG_DIR / f"tmp-{key}"
     shutil.rmtree(work, ignore_errors=True)
     try:
-        count = avatar2d.render_frames(tokens, avatar2d.LOOKS.get(avatar["id"], avatar2d.DEFAULT_LOOK), work)
-        if count == 0:
+        if avatar2d.render_frames([token], avatar2d.LOOKS.get(avatar["id"], avatar2d.DEFAULT_LOOK), work, intro=False) == 0:
             raise RuntimeError("No frames rendered")
-        subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-framerate", str(avatar2d.FPS), "-i", str(work / "frame_%04d.png"),
-                        "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an", str(out_path)],
-                       check=True, timeout=180)
-        if not out_path.exists() or out_path.stat().st_size == 0:
-            raise RuntimeError("Rendered video is empty (0 KB)")
-        # WebM (VP8) twin for web browsers without H.264 support; native players use the MP4.
-        webm = out_path.with_suffix(".webm")
-        subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(out_path), "-c:v", "libvpx", "-b:v", "500k",
-                        "-deadline", "realtime", "-cpu-used", "8", "-an", str(webm)], check=True, timeout=180)
-        if not webm.exists() or webm.stat().st_size == 0:
-            raise RuntimeError("Rendered webm is empty (0 KB)")
+        _ffmpeg(["-framerate", str(avatar2d.FPS), "-i", str(work / "frame_%04d.png"), "-vf", SEG_VF, *SEG_ENC, str(seg)])
     finally:
         shutil.rmtree(work, ignore_errors=True)
+    if not _valid(seg):
+        raise RuntimeError("Avatar segment empty")
+    return seg
+
+def _render_sign_video(tokens: List[avatar2d.Token], language: str, avatar: dict, out_path: Path) -> None:
+    """Message video = concat of one segment per sign: real interpreter clip when available (clips.py),
+    otherwise the 2D avatar. Produces ONE continuous MP4 (+ WebM twin for web)."""
+    segments: List[Path] = []
+    for tok in tokens:
+        url = clips.clip_for(language, tok.label) if tok.kind == "word" else None
+        if url:
+            try:
+                segments.append(_clip_segment(url))
+                continue
+            except Exception as e:
+                logging.warning(f"Real clip failed for '{tok.label}', using avatar fallback: {e}")
+        segments.append(_avatar_segment(tok, avatar))
+    if not segments:
+        raise RuntimeError("Nothing to render")
+    list_file = out_path.with_suffix(".txt")
+    list_file.write_text("".join(f"file '{p}'\n" for p in segments))
+    try:
+        _ffmpeg(["-f", "concat", "-safe", "0", "-i", str(list_file), "-c", "copy", "-movflags", "+faststart", str(out_path)])
+    finally:
+        list_file.unlink(missing_ok=True)
+    if not _valid(out_path):
+        raise RuntimeError("Rendered video is empty (0 KB)")
+    webm = out_path.with_suffix(".webm")
+    _ffmpeg(["-i", str(out_path), "-c:v", "libvpx", "-b:v", "500k", "-deadline", "realtime", "-cpu-used", "8", "-an", str(webm)])
+    if not _valid(webm):
+        raise RuntimeError("Rendered webm is empty (0 KB)")
 
 async def _tokenize_for_signs(text: str, language: str) -> List[avatar2d.Token]:
     """Greedy longest-match of phrases/words against the bimanual gesture library (accent-insensitive);
@@ -450,7 +526,7 @@ async def build_sign_video(text: str, language: str, avatar_id: Optional[str], p
     if not tokens:
         return None
     sig = "|".join(f"{t.kind}:{t.label}:{t.handshape.name if t.handshape else '-'}" for t in tokens)
-    key = hashlib.sha256(f"v2|{language}|{avatar['id']}|{sig}".encode()).hexdigest()[:32]
+    key = hashlib.sha256(f"v3|{language}|{avatar['id']}|{sig}".encode()).hexdigest()[:32]
     out = VIDEO_DIR / f"{key}.mp4"
 
     def _missing() -> bool:
@@ -458,11 +534,11 @@ async def build_sign_video(text: str, language: str, avatar_id: Optional[str], p
 
     if _missing():
         if priority:
-            await run_in_threadpool(_render_sign_video, tokens, avatar, out)
+            await run_in_threadpool(_render_sign_video, tokens, language, avatar, out)
         else:
             async with _free_render_queue:
                 if _missing():
-                    await run_in_threadpool(_render_sign_video, tokens, avatar, out)
+                    await run_in_threadpool(_render_sign_video, tokens, language, avatar, out)
     return f"/api/media/videos/{key}.mp4"
 
 AVATAR_PORTRAIT_DIR = MEDIA_DIR / "avatars"
@@ -867,6 +943,91 @@ async def sign_to_text(req: SignToTextReq, user=Depends(get_current_user)):
     )
     await db.messages.insert_one(msg.model_dump())
     return msg.model_dump()
+
+# ------------------- FULL VIDEO ANALYSIS (record → stop → careful analysis) -------------------
+MAX_SIGN_VIDEO_BYTES = 40 * 1024 * 1024
+VIDEO_SAMPLE_FPS = 2
+MAX_VIDEO_FRAMES = 16
+ALLOWED_VIDEO_TYPES = {"video/mp4", "video/quicktime", "video/webm", "video/x-matroska", "video/3gpp", "application/octet-stream"}
+
+def _extract_video_frames(video_path: Path, out_dir: Path) -> List[str]:
+    """Sample the recorded clip at VIDEO_SAMPLE_FPS (max MAX_VIDEO_FRAMES, evenly spread) → base64 JPEGs."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(video_path), "-vf", f"fps={VIDEO_SAMPLE_FPS},scale=384:-2",
+                    "-q:v", "6", str(out_dir / "f_%04d.jpg")], check=True, timeout=120)
+    files = sorted(out_dir.glob("f_*.jpg"))
+    if len(files) > MAX_VIDEO_FRAMES:
+        step = len(files) / MAX_VIDEO_FRAMES
+        files = [files[int(i * step)] for i in range(MAX_VIDEO_FRAMES)]
+    return [base64.b64encode(f.read_bytes()).decode() for f in files]
+
+def _parse_sign_list(raw: str) -> List[str]:
+    try:
+        m = re.search(r"\{.*\}", raw, re.S)
+        data = json.loads(m.group(0) if m else raw)
+        signs = data.get("signs") or []
+        return [str(s).strip() for s in signs if s and str(s).strip().lower() not in ("null", "none")]
+    except Exception:
+        return []
+
+@api_router.post("/translate/sign-video")
+async def sign_video(
+    video: UploadFile = File(...),
+    language: str = Form("es"),
+    save: str = Form("true"),
+    user=Depends(get_current_user),
+):
+    """Analyse a whole recorded clip: frames are extracted server-side and evaluated as ONE temporal sequence
+    so the model can segment several consecutive signs. Returns the sign list + composed sentence
+    (and stores a translator message unless save=false, e.g. when the chat sends it)."""
+    lang = "es" if language == "es" else "en"
+    if video.content_type and video.content_type.split(";")[0] not in ALLOWED_VIDEO_TYPES:
+        raise HTTPException(415, "Unsupported video type")
+    data = await video.read(MAX_SIGN_VIDEO_BYTES + 1)
+    if len(data) > MAX_SIGN_VIDEO_BYTES:
+        raise HTTPException(413, "Video too large (max 40 MB)")
+    if len(data) < 1000:
+        raise HTTPException(400, "Video file is empty")
+    work = VIDEO_DIR / f"analyze-{uuid.uuid4().hex}"
+    work.mkdir(parents=True, exist_ok=True)
+    try:
+        src = work / f"input{Path(video.filename or 'clip.mp4').suffix or '.mp4'}"
+        src.write_bytes(data)
+        try:
+            frames = await run_in_threadpool(_extract_video_frames, src, work / "frames")
+        except Exception as e:
+            logging.warning(f"Frame extraction failed: {e}")
+            raise HTTPException(422, "No se pudo leer el video grabado")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    if not frames:
+        raise HTTPException(422, "El video no contiene fotogramas")
+    prompt = (
+        f"Here are {len(frames)} frames sampled at {VIDEO_SAMPLE_FPS} frames per second from ONE continuous recording "
+        "(chronological, frame 1 first). The person may perform SEVERAL signs one after another. Carefully segment the "
+        "sequence: group consecutive frames that belong to the same sign, ignore transitions and frames without hands, "
+        "and never repeat a sign unless it is clearly performed twice. Fingerspelled letters must be returned one by one. "
+        'Respond ONLY with JSON: {"signs": ["<sign 1>", "<sign 2>", ...], "confidence": <0.0-1.0>} '
+        '(an empty list if no clear sign is visible).'
+    )
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"signvideo-{user['id']}-{uuid.uuid4()}",
+            system_message=_sign_system_prompt(lang),
+        ).with_model(*VISION_MODEL)
+        raw = await chat.send_message(UserMessage(text=prompt, file_contents=[ImageContent(image_base64=f) for f in frames]))
+    except Exception as e:
+        logging.warning(f"Vision model error (video): {e}")
+        raise HTTPException(424, "Sign recognition service unavailable")
+    signs = [s.upper() if len(s) == 1 else s.lower() for s in _parse_sign_list(raw)]
+    text = _compose_sentence(signs, lang)
+    result = {"signs": signs, "text": text, "frames_analyzed": len(frames), "message": None}
+    if text and save.lower() != "false":
+        msg = Message(user_id=user["id"], direction="sign_to_text", language=lang, original_text=" ".join(signs), translated_text=text)
+        await db.messages.insert_one(msg.model_dump())
+        result["message"] = msg.model_dump()
+    return result
 
 @api_router.post("/translate/text-to-sign")
 async def text_to_sign(req: TextToSignReq, user=Depends(get_current_user)):

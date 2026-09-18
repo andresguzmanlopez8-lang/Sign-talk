@@ -9,6 +9,7 @@ import { useLang } from "@/src/lang";
 import { usePremium } from "@/src/premium";
 
 export type Avatar = { id: string; gender: "male" | "female"; name: string; style: string; image_url: string; locked: boolean };
+export type Interpreter = { id: string; name: string; language: "es" | "en"; credit: string; image_url: string; clips: number };
 
 type Props = {
   selectedId: string | null;
@@ -22,12 +23,21 @@ export default function AvatarGallery({ selectedId, onSelect, compact }: Props) 
   const router = useRouter();
   const { isPremium } = usePremium();
   const [avatars, setAvatars] = useState<Avatar[]>([]);
+  const [interpreters, setInterpreters] = useState<Interpreter[]>([]);
+  const [broken, setBroken] = useState<Set<string>>(new Set());
+  const markBroken = (id: string) => setBroken((prev) => new Set(prev).add(id));
   const [gender, setGender] = useState<"all" | "male" | "female">("all");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
 
   useEffect(() => {
-    api.avatars().then((r) => setAvatars(r.items)).catch((e) => console.warn(e)).finally(() => setLoading(false));
+    api.avatars()
+      .then((r) => {
+        setAvatars(r.items);
+        setInterpreters(r.interpreters ?? []);
+      })
+      .catch((e) => console.warn(e))
+      .finally(() => setLoading(false));
   }, [isPremium]);
 
   const visible = avatars.filter((a) => gender === "all" || a.gender === gender);
@@ -66,7 +76,19 @@ export default function AvatarGallery({ selectedId, onSelect, compact }: Props) 
             const locked = a.locked && !isPremium;
             return (
               <Pressable key={a.id} style={[styles.card, compact && styles.cardCompact, active && styles.cardActive, locked && styles.cardLocked]} onPress={() => pick(a)} testID={`avatar-${a.id}`}>
-                <Image source={{ uri: mediaUrl(a.image_url) }} style={[styles.img, compact && styles.imgCompact, locked && styles.imgLocked]} contentFit="cover" />
+                {broken.has(a.id) ? (
+                  <View style={[styles.img, compact && styles.imgCompact, styles.imgFallback]}>
+                    <Text style={styles.imgFallbackText}>{a.name[0]}</Text>
+                  </View>
+                ) : (
+                  <Image
+                    source={{ uri: mediaUrl(a.image_url) }}
+                    style={[styles.img, compact && styles.imgCompact, locked && styles.imgLocked]}
+                    contentFit="cover"
+                    onError={() => markBroken(a.id)}
+                    testID={`avatar-img-${a.id}`}
+                  />
+                )}
                 <Text style={styles.name}>{a.name}</Text>
                 <Text style={styles.style}>{locked ? `👑 ${t.premiumOnly}` : a.style}</Text>
                 {locked && <Text style={styles.lock} testID={`avatar-locked-${a.id}`}>🔒</Text>}
@@ -75,6 +97,22 @@ export default function AvatarGallery({ selectedId, onSelect, compact }: Props) 
               </Pressable>
             );
           })}
+        </View>
+      )}
+      {interpreters.length > 0 && (
+        <View style={styles.interpBox} testID="interpreters">
+          <Text style={styles.interpTitle}>🎥 {t.realInterpreter}</Text>
+          <Text style={styles.interpDesc}>{t.realInterpreterDesc}</Text>
+          <View style={styles.grid}>
+            {interpreters.map((i) => (
+              <View key={i.id} style={[styles.card, styles.interpCard]} testID={`interpreter-${i.id}`}>
+                <Image source={{ uri: mediaUrl(i.image_url) }} style={styles.interpImg} contentFit="cover" testID={`interpreter-img-${i.id}`} />
+                <Text style={styles.name}>{i.name}</Text>
+                <Text style={styles.style}>{i.language === "en" ? "ASL · English" : "LSM · Español"} · {i.clips} {t.clipsAvailable}</Text>
+                <Text style={styles.credit}>{i.credit}</Text>
+              </View>
+            ))}
+          </View>
         </View>
       )}
     </View>
@@ -95,6 +133,14 @@ const styles = StyleSheet.create({
   cardLocked: { borderStyle: "dashed", opacity: 0.85 },
   img: { width: 72, height: 72, borderRadius: 36, backgroundColor: colors.surfaceTertiary },
   imgLocked: { opacity: 0.45 },
+  imgFallback: { alignItems: "center", justifyContent: "center", backgroundColor: colors.brandTertiary },
+  imgFallbackText: { color: colors.onBrandTertiary, fontWeight: "800", fontSize: 24 },
+  interpBox: { marginTop: spacing.md, gap: spacing.xs },
+  interpTitle: { color: colors.onSurface, fontWeight: "800", fontSize: 14 },
+  interpDesc: { color: colors.onSurfaceTertiary, fontSize: 12, marginBottom: spacing.xs },
+  interpCard: { width: "100%", borderColor: colors.success },
+  interpImg: { width: 120, height: 120, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary },
+  credit: { color: colors.muted, fontSize: 10, textAlign: "center", marginTop: 4 },
   lock: { position: "absolute", top: 6, right: 8, fontSize: 16 },
   imgCompact: { width: 56, height: 56, borderRadius: 28 },
   name: { color: colors.onSurface, fontWeight: "800", fontSize: 13, marginTop: 4 },

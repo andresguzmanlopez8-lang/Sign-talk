@@ -97,6 +97,15 @@ export const api = {
   },
   signToText: (language: "es" | "en", signs: string[]) =>
     request<any>("/translate/sign-to-text", { method: "POST", body: { language, signs } }),
+  /** Whole recorded clip → server-side frame extraction → ordered sign sequence. */
+  signVideo: async (videoUri: string, language: "es" | "en", save = false) => {
+    const form = new FormData();
+    form.append("language", language);
+    form.append("save", save ? "true" : "false");
+    const ext = videoUri.split(".").pop()?.toLowerCase() ?? "mp4";
+    form.append("video", { uri: videoUri, name: `sign.${ext}`, type: ext === "mov" ? "video/quicktime" : "video/mp4" } as any);
+    return request<{ signs: string[]; text: string; frames_analyzed: number; message: any }>("/translate/sign-video", { method: "POST", form });
+  },
   signFrame: (frames: string[], language: "es" | "en", previous: string[]) =>
     request<{ sign: string | null; confidence: number; motion: "static" | "dynamic" | "none"; frames_analyzed: number }>("/translate/sign-frame", {
       method: "POST",
@@ -137,7 +146,7 @@ export const api = {
   viewContact: (payload: { profileId?: string; displayName: string; profileImageUrl?: string | null; phone?: string | null }) =>
     request<{ contact: any; created: boolean; message: string | null }>("/contacts/view", { method: "POST", body: payload }),
   contacts: () => request<any[]>("/contacts"),
-  avatars: () => request<{ items: any[]; default_id: string; free_ids: string[]; is_premium: boolean }>("/avatars"),
+  avatars: () => request<{ items: any[]; default_id: string; free_ids: string[]; is_premium: boolean; interpreters: any[] }>("/avatars"),
   deleteContact: (id: string) => request<any>(`/contacts/${id}`, { method: "DELETE" }),
   // Chat 1:1
   chatMatch: (phones: string[]) => request<{ items: any[] }>("/chat/match", { method: "POST", body: { phones } }),

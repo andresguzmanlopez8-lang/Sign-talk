@@ -196,8 +196,8 @@ class Token:
     handshape: Optional[Path] = None  # letter picture for fingerspelling
 
 
-def render_frames(tokens: Sequence[Token], look: Look, out_dir: Path) -> int:
-    """Write frame_XXXX.png for the whole message (intro + one clip per token + outro). Returns frame count."""
+def render_frames(tokens: Sequence[Token], look: Look, out_dir: Path, intro: bool = True) -> int:
+    """Write frame_XXXX.png for the tokens (optional intro + one clip per token + short return to rest). Returns frame count."""
     out_dir.mkdir(parents=True, exist_ok=True)
     idx = 0
 
@@ -207,7 +207,7 @@ def render_frames(tokens: Sequence[Token], look: Look, out_dir: Path) -> int:
         idx += 1
 
     # Intro: neutral pose, small breathing motion
-    for f in range(int(0.6 * FPS)):
+    for f in range(int(0.6 * FPS) if intro else 0):
         b = 3 * math.sin(2 * math.pi * f / FPS)
         emit(draw_character(look, (REST_L[0], REST_L[1] + b), (REST_R[0], REST_R[1] + b)))
 
@@ -237,7 +237,7 @@ def render_frames(tokens: Sequence[Token], look: Look, out_dir: Path) -> int:
             prev_l, prev_r = _pose_at(keys, 1.0)
 
     # Outro: return to rest
-    n = int(0.5 * FPS)
+    n = int((0.5 if intro else 0.3) * FPS)
     for f in range(n):
         k = _ease(f / max(1, n - 1))
         emit(draw_character(look, _lerp(prev_l, REST_L, k), _lerp(prev_r, REST_R, k)))

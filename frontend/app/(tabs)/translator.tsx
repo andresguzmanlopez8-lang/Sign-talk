@@ -12,7 +12,6 @@ import {
   FlatList,
 } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import * as ImageManipulator from "expo-image-manipulator";
 import { useAudioRecorder, AudioModule, RecordingPresets, setAudioModeAsync } from "expo-audio";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -22,6 +21,8 @@ import { api } from "@/src/api";
 import { colors, spacing, radius } from "@/src/theme";
 import { useLang } from "@/src/lang";
 import { usePremium } from "@/src/premium";
+import { useSignRecorder } from "@/src/useSignRecorder";
+import { CameraOverlay, SignReviewBar } from "@/src/components/CameraOverlay";
 import { exportChatPdf } from "@/src/exportChat";
 import ContactPicker from "@/src/components/ContactPicker";
 import { SignCamera } from "@/src/components/SignCamera";
@@ -50,15 +51,10 @@ export default function Translator() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { t, lang, setLang } = useLang();
-  const { status: premium, isPremium, notifyMessageSent, refresh: refreshPremium } = usePremium();
-  const recordLimit = premium.limits.sign_record_seconds;
-  const [elapsed, setElapsed] = useState(0);
-  const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stopRef = useRef<(auto?: boolean) => Promise<void>>(async () => {});
+  const { isPremium, notifyMessageSent, refresh: refreshPremium } = usePremium();
   const [messages, setMessages] = useState<Msg[]>([]);
   const [mode, setMode] = useState<Mode>("sign");
   const [camPerm, requestCamPerm] = useCameraPermissions();
-  const [recordingSign, setRecordingSign] = useState(false);
   const [recordingVoice, setRecordingVoice] = useState(false);
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState("");
@@ -68,91 +64,18 @@ export default function Translator() {
   const [exporting, setExporting] = useState(false);
   const [shareText, setShareText] = useState<string | null>(null);
   const [phrasesOpen, setPhrasesOpen] = useState(false);
-  // Live sign recognition state
   const cameraRef = useRef<CameraView>(null);
-  const [liveSign, setLiveSign] = useState<{ sign: string | null; confidence: number; motion?: string } | null>(null);
-  const [detectedSigns, setDetectedSigns] = useState<string[]>([]);
-  const detectedRef = useRef<string[]>([]);
-  const recordingRef = useRef(false);
-  const frameBusyRef = useRef(false);
-  const frameTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recorder = useSignRecorder(cameraRef, {
+    language: lang,
+    onSigns: (signs) => translateSigns(signs),
+    onLimitReached: () => {
+      if (!isPremium) router.push({ pathname: "/paywall", params: { reason: "limit" } });
+    },
+    onNothingDetected: () => showToast(t.noSignDetected),
+    onError: () => showToast(t.recognitionError),
+  });
+  const recordingSign = recorder.recording;
 
-  const FRAME_INTERVAL_MS = 400; // sampling: 2.5 fps
-  const BURST_SIZE = 4; // key frames per sign burst (3-5)
-  const MIN_CONFIDENCE = 0.5;
-  const frameBufferRef = useRef<string[]>([]);
-  const analyzeBusyRef = useRef(false);
-
-  /** Capture one downscaled frame (native async work) and push it into the burst buffer. */
-  const captureFrame = async () => {
-    if (!recordingRef.current || frameBusyRef.current || !cameraRef.current) return;
-    if (frameBufferRef.current.length >= BURST_SIZE + 1) return; // throttle: buffer full, wait for analysis
-    frameBusyRef.current = true;
-    try {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.3, skipProcessing: true, shutterSound: false, base64: Platform.OS === "web" });
-      if (!photo) return;
-      let base64 = photo.base64 ?? null;
-      if (Platform.OS !== "web") {
-        const small = await ImageManipulator.manipulateAsync(photo.uri, [{ resize: { width: 384 } }], {
-          compress: 0.55,
-          format: ImageManipulator.SaveFormat.JPEG,
-          base64: true,
-        });
-        base64 = small.base64 ?? null;
-      }
-      if (base64 && recordingRef.current) frameBufferRef.current.push(base64);
-    } catch (e) {
-      console.warn("frame", e);
-    } finally {
-      frameBusyRef.current = false;
-    }
-  };
-
-  /** Send the ordered burst to the vision model once enough frames are buffered (runs independently of capture). */
-  const analyzeBurst = async () => {
-    if (!recordingRef.current || analyzeBusyRef.current) return;
-    if (frameBufferRef.current.length < Math.min(3, BURST_SIZE)) return;
-    analyzeBusyRef.current = true;
-    const frames = frameBufferRef.current.slice(0, BURST_SIZE);
-    frameBufferRef.current = [];
-    try {
-      const res = await api.signFrame(frames, lang, detectedRef.current);
-      if (!recordingRef.current) return;
-      setLiveSign(res);
-      const last = detectedRef.current[detectedRef.current.length - 1];
-      if (res.sign && res.confidence >= MIN_CONFIDENCE && res.sign.toLowerCase() !== last?.toLowerCase()) {
-        detectedRef.current = [...detectedRef.current, res.sign];
-        setDetectedSigns(detectedRef.current);
-        Haptics.selectionAsync().catch(() => {});
-      }
-    } catch (e) {
-      console.warn("burst", e);
-    } finally {
-      analyzeBusyRef.current = false;
-    }
-  };
-
-  const analyzeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  /** Remove a wrongly detected sign before the sentence is composed. */
-  const removeDetected = (index: number) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    detectedRef.current = detectedRef.current.filter((_, i) => i !== index);
-    setDetectedSigns(detectedRef.current);
-  };
-
-  const stopFrameLoop = () => {
-    recordingRef.current = false;
-    if (frameTimerRef.current) clearInterval(frameTimerRef.current);
-    if (analyzeTimerRef.current) clearInterval(analyzeTimerRef.current);
-    if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
-    frameTimerRef.current = null;
-    analyzeTimerRef.current = null;
-    elapsedTimerRef.current = null;
-    frameBufferRef.current = [];
-  };
-
-  useEffect(() => stopFrameLoop, []);
   const scrollRef = useRef<FlatList<Msg>>(null);
 
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
@@ -244,49 +167,11 @@ export default function Translator() {
     } catch {}
   };
 
-  const startRecordSign = async () => {
-    if (!camPerm?.granted) {
-      await requestCamPerm();
-      return;
-    }
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    detectedRef.current = [];
-    setDetectedSigns([]);
-    setLiveSign(null);
-    recordingRef.current = true;
-    setRecordingSign(true);
-    frameBufferRef.current = [];
-    frameTimerRef.current = setInterval(captureFrame, FRAME_INTERVAL_MS);
-    analyzeTimerRef.current = setInterval(analyzeBurst, 300);
-    // Plan limit: free 15 s / premium 60 s — auto-stop when reached.
-    setElapsed(0);
-    const startedAt = Date.now();
-    elapsedTimerRef.current = setInterval(() => {
-      const s = Math.floor((Date.now() - startedAt) / 1000);
-      setElapsed(s);
-      if (s >= recordLimit && recordingRef.current) stopRef.current(true);
-    }, 500);
-  };
-
-  const stopRecordSign = async (auto = false) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    stopFrameLoop();
-    setRecordingSign(false);
-    setLiveSign(null);
-    const signs = detectedRef.current;
-    const showLimitPaywall = () => {
-      if (auto && !isPremium) router.push({ pathname: "/paywall", params: { reason: "limit" } });
-    };
-    if (signs.length === 0) {
-      showToast(t.noSignDetected);
-      showLimitPaywall();
-      return;
-    }
+  const translateSigns = async (signs: string[]) => {
     setLoading(true);
     try {
       const msg = await api.signToText(lang, signs);
       setMessages((prev) => [...prev, msg]);
-      setDetectedSigns([]);
       notifyMessageSent();
       try {
         const tts = await api.tts(msg.translated_text, lang === "es" ? "nova" : "alloy");
@@ -298,10 +183,8 @@ export default function Translator() {
     } finally {
       setLoading(false);
       scrollToEnd();
-      showLimitPaywall();
     }
   };
-  stopRef.current = stopRecordSign;
 
   const startRecordVoice = async () => {
     try {
@@ -486,48 +369,13 @@ export default function Translator() {
           {mode === "sign" ? (
             camPerm?.granted ? (
               <View style={styles.cameraWrap}>
-                <SignCamera ref={cameraRef} recording={recordingSign} />
+                <SignCamera ref={cameraRef} recording={recordingSign} facing={recorder.facing} mode={recorder.cameraMode} />
                 <LinearGradient
                   colors={["transparent", "rgba(13,14,18,0.9)"]}
                   style={styles.scrim}
                   pointerEvents="none"
                 />
-                {recordingSign && (
-                  <View style={[styles.recBadge, recordLimit - elapsed <= 5 && styles.recBadgeWarn]} testID="rec-timer">
-                    <View style={styles.recDot} />
-                    <Text style={styles.recText}>{t.recording} {elapsed}s / {recordLimit}s</Text>
-                  </View>
-                )}
-                {recordingSign && (
-                  <View style={styles.liveBox} testID="live-sign">
-                    <Text style={styles.liveLabel}>
-                      {liveSign?.sign ? `✋ ${t.detected}` : t.detecting}
-                    </Text>
-                    {liveSign?.sign ? (
-                      <Text style={styles.liveSign} testID="live-sign-value">
-                        {liveSign.sign} · {Math.round(liveSign.confidence * 100)}%{liveSign.motion === "dynamic" ? " · 🔁" : ""}
-                      </Text>
-                    ) : (
-                      <ActivityIndicator color={colors.brandPrimary} size="small" />
-                    )}
-                    {detectedSigns.length > 0 && <Text style={styles.seqHint}>{t.tapChipToRemove}</Text>}
-                    {detectedSigns.length > 0 && (
-                      <View style={styles.seqRow} testID="detected-sequence">
-                        {detectedSigns.map((s, i) => (
-                          <Pressable
-                            key={`${s}-${i}`}
-                            style={styles.seqChip}
-                            onPress={() => removeDetected(i)}
-                            testID={`seq-chip-${i}`}
-                            accessibilityLabel={`${s} ✕`}
-                          >
-                            <Text style={styles.seqText}>{s} ✕</Text>
-                          </Pressable>
-                        ))}
-                      </View>
-                    )}
-                  </View>
-                )}
+                <CameraOverlay rec={recorder} testPrefix="translator-cam" />
               </View>
             ) : (
               <View style={styles.permAsk}>
@@ -569,6 +417,8 @@ export default function Translator() {
             <Text style={[styles.modeText, mode === "voice" && styles.modeTextActive]}>💬 → Señas</Text>
           </Pressable>
         </View>
+
+        {mode === "sign" && <SignReviewBar rec={recorder} confirmLabel={`✓ ${t.translateSigns}`} testPrefix="translator-review" />}
 
         {/* Chat */}
         <FlatList
@@ -630,7 +480,7 @@ export default function Translator() {
             <View style={styles.signControls}>
               <Pressable
                 style={[styles.recordBtn, recordingSign && styles.recordBtnActive]}
-                onPress={() => (recordingSign ? stopRecordSign() : startRecordSign())}
+                onPress={() => (recordingSign ? recorder.stop() : camPerm?.granted ? recorder.start() : requestCamPerm())}
                 disabled={loading}
                 testID="record-sign-btn"
                 accessibilityLabel={recordingSign ? t.tapToStop : t.tapToRecord}
@@ -725,9 +575,6 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: radius.pill,
   },
-  recDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#fff" },
-  recBadgeWarn: { backgroundColor: "rgba(245,158,11,0.95)" },
-  recText: { color: "#fff", fontSize: 12, fontWeight: "700" },
   permAsk: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.md, padding: spacing.lg },
   permIcon: { fontSize: 40 },
   permTitle: { color: colors.onSurface, fontSize: 16, fontWeight: "700" },
@@ -802,13 +649,6 @@ const styles = StyleSheet.create({
   recordBtnText: { fontSize: 32 },
   signControls: { alignItems: "center", gap: spacing.xs },
   recordHint: { color: colors.onSurfaceTertiary, fontSize: 11, fontWeight: "600" },
-  liveBox: { position: "absolute", left: spacing.md, right: spacing.md, bottom: spacing.md, backgroundColor: "rgba(13,14,18,0.8)", borderRadius: radius.md, padding: spacing.sm, gap: 4, borderWidth: 1, borderColor: colors.border },
-  liveLabel: { color: colors.onSurfaceTertiary, fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: 1 },
-  liveSign: { color: colors.onSurface, fontSize: 20, fontWeight: "800" },
-  seqRow: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 2 },
-  seqChip: { backgroundColor: colors.brandPrimary, paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: radius.sm },
-  seqText: { color: colors.onBrandPrimary, fontWeight: "800", fontSize: 12 },
-  seqHint: { color: colors.onSurfaceTertiary, fontSize: 10, marginTop: 2 },
   renderingBox: { flexDirection: "row", alignItems: "center", gap: spacing.sm, alignSelf: "flex-end", backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: spacing.md, marginHorizontal: spacing.lg, marginBottom: spacing.sm, borderWidth: 1, borderColor: colors.border },
   renderingText: { color: colors.onSurfaceSecondary, fontSize: 12, fontWeight: "700" },
   voiceRow: { flexDirection: "row", gap: spacing.sm, alignItems: "center" },

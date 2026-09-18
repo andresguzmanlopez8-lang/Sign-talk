@@ -17,6 +17,7 @@ import { api, clearToken } from "@/src/api";
 import { colors, spacing, radius } from "@/src/theme";
 import { useLang } from "@/src/lang";
 import { usePremium } from "@/src/premium";
+import { useSignSpeed, SPEED_ORDER, SPEED_RATE } from "@/src/signSpeed";
 import AvatarGallery from "@/src/components/AvatarGallery";
 import { Lang } from "@/src/constants";
 
@@ -25,6 +26,7 @@ export default function Profile() {
   const insets = useSafeAreaInsets();
   const { t, lang, setLang } = useLang();
   const { isPremium, status, refresh } = usePremium();
+  const [speed, setSpeed] = useSignSpeed();
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -148,6 +150,26 @@ export default function Profile() {
             <Text style={styles.flag}>🇺🇸</Text>
             <Text style={[styles.langName, lang === "en" && styles.langNameActive]}>English (ASL)</Text>
           </Pressable>
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>⏱ {t.signSpeed}</Text>
+        <Text style={styles.avatarDesc}>{t.signSpeedDesc}</Text>
+        <View style={styles.langRow}>
+          {SPEED_ORDER.map((s) => (
+            <Pressable
+              key={s}
+              style={[styles.langCard, speed === s && styles.langCardActive]}
+              onPress={() => setSpeed(s)}
+              testID={`profile-speed-${s}`}
+            >
+              <Text style={styles.flag}>{s === "slow" ? "🐢" : s === "fast" ? "🐇" : "🚶"}</Text>
+              <Text style={[styles.langName, speed === s && styles.langNameActive]}>
+                {s === "slow" ? t.speedSlow : s === "fast" ? t.speedFast : t.speedNormal} · {SPEED_RATE[s]}×
+              </Text>
+            </Pressable>
+          ))}
         </View>
       </View>
 

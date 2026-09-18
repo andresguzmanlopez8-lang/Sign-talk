@@ -2,7 +2,7 @@ import React, { forwardRef, memo } from "react";
 import { StyleSheet } from "react-native";
 import { CameraView } from "expo-camera";
 
-type Props = { recording: boolean };
+type Props = { recording: boolean; facing?: "front" | "back"; mode?: "picture" | "video" };
 
 /**
  * Isolated camera preview. `memo` guarantees the native camera controller is NOT re-rendered
@@ -10,12 +10,13 @@ type Props = { recording: boolean };
  * While recording, autofocus is switched off so the lens stays locked (expo-camera has no exposure lock API).
  */
 export const SignCamera = memo(
-  forwardRef<CameraView, Props>(function SignCamera({ recording }, ref) {
+  forwardRef<CameraView, Props>(function SignCamera({ recording, facing = "front", mode = "picture" }, ref) {
     return (
       <CameraView
         ref={ref}
         style={styles.camera}
-        facing="front"
+        facing={facing}
+        mode={mode}
         autofocus={recording ? "off" : "on"}
         animateShutter={false}
         mute
@@ -23,7 +24,7 @@ export const SignCamera = memo(
       />
     );
   }),
-  (prev, next) => prev.recording === next.recording
+  (prev, next) => prev.recording === next.recording && prev.facing === next.facing && prev.mode === next.mode
 );
 
 const styles = StyleSheet.create({

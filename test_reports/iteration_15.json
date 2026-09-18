@@ -1,0 +1,36 @@
+{
+  "summary": "Iteration 15 (real interpreter clips + video-based sign analysis + camera switch/record) validated end-to-end. BACKEND: 12/12 new tests in test_real_clips_video_analysis.py + 10/10 regression from test_sign_frame_burst.py all green against https://sign-talk-16.preview.emergentagent.com/api. Covered: (a) POST /api/translate/text-to-sign EN 'Thank you my friend, I need water' → mp4 /api/media/videos/<32hex>.mp4 (200 with Accept-Ranges: bytes + Content-Length ~big), Range bytes=0-1023 → 206 with Content-Range bytes 0-1023/<size>, .webm twin → 200 video/webm, second identical POST returns SAME cached video_url and ≥2× faster; (b) Spanish 'Hola amigo gracias' → 200 mp4 (2D avatar fallback); (c) GET /api/avatars returns 6 items + interpreters=[{id:lifeprint-asl,language:en,clips>0,image_url:/api/media/interpreters/lifeprint-asl.png}]; (d) GET /api/media/interpreters/lifeprint-asl.png → 200 image/png 119 KB; unknown id → 404; (e) GET /api/media/avatars/m1.png → 200 image/png; (f) POST /api/translate/sign-video multipart with real ASL clip fixture (clip-12e2e8b… 'thank you') → 200 {signs:['thank you'|…], text:'…', frames_analyzed>0, message:null when save=false} — with save default true, sign_to_text message is persisted and appears in GET /api/messages; (g) text/plain → 415, tiny 10-byte body → 400, no-auth → 401; (h) regression POST /api/chat/messages/{mid}/sign-video for English chat text 'Thank you friend' → 200 with video_url that serves 200 video/mp4. FRONTEND (web 390x844, +52 5550001111 / 123456): Traductor tab loads (translator-title). With browser permission granted, camera preview is live and translator-cam-switch is visible on the camera overlay (translator-cam-timer only appears during recordAsync which cannot run on web — expected). Lang header chip toggles LSM ↔ ASL correctly (lang-switch reads '🇺🇸 ASL' after tap). Mode '💬 → Señas' (testID=mode-voice) reveals text-input + send-btn; sending 'Thank you friend' in ASL creates a bubble whose <video> loads readyState=4 and the top avatar-video panel shows the newly rendered .webm (480×480, rs=4). Tapping an older replay-<id> updates avatar-video to a different cached .webm (rs=4). Perfil: avatar-img-m1/m2/f1 all IMG naturalWidth=480 (loaded), interpreters card present with interpreter-img-lifeprint-asl (IMG naturalWidth=480 from /api/media/interpreters/lifeprint-asl.png). Chats → conversation-<id> opens chat, chat-sign-btn (👐) opens sign-capture-sheet showing camera preview + sign-sheet-close + sign-sheet-switch (only when perm granted, sign-sheet-perm not shown as expected). Close button dismisses the sheet. Console only shows a benign 'props.pointerEvents is deprecated' warning (React Native Web) and one 404 for a lesson resource — not related to this iteration. NO red screen, NO crash on the web burst-fallback path.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "React Native Web pointerEvents", "issue": "Console warning: 'props.pointerEvents is deprecated. Use style.pointerEvents'. Appears once on route change; harmless but should be migrated. Origin likely a third-party component (e.g., an overlay/badge). Reference: search for `pointerEvents=\"none\"` prop in /app/frontend/src and move it to style.pointerEvents."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_real_clips_video_analysis.py",
+    "/app/test_reports/pytest/real_clips_video_analysis.xml",
+    "/app/test_reports/pytest/sign_frame_burst_iter15.xml"
+  ],
+  "action_items": [
+    "(Nit) Migrate remaining `pointerEvents` JSX props to `style.pointerEvents` to silence RN Web deprecation warning.",
+    "(Nit) One 404 was seen in web console during Traductor render (unknown resource — possibly a lesson image or a legacy asset). Not related to this iteration; consider inspecting Network tab and either shipping the asset or removing the reference."
+  ],
+  "critical_code_review_comments": [
+    "server.py video streaming (lines 559-584) correctly implements Accept-Ranges + 206 + Content-Range for both mp4 and webm — validated against real requests.",
+    "text-to-sign is idempotent: the second call to POST /translate/text-to-sign with same {text,language,avatar_id} returns the SAME /api/media/videos/<hex>.mp4 URL and is served from cache (verified in test_english_text_returns_mp4_with_ranges).",
+    "clips.py exposes INTERPRETERS as a list with `lifeprint-asl` and preview_key normalize('thank you'); /api/media/interpreters/<id>.png thumbnails the preview clip's first frame — cached at CDN edge for 24h.",
+    "/translate/sign-video validates content-type (415), min-size (400), max-size (413), auth (401), extracts frames server-side and sends to vision LLM in one temporal batch — matches spec of segmenting multiple consecutive signs.",
+    "Frontend translator.tsx correctly uses testPrefix='translator-cam' for CameraOverlay, and SignCaptureSheet uses testPrefix='sign-sheet' — testIDs translator-cam-switch, translator-cam-timer, sign-sheet-switch resolve as expected in the DOM.",
+    "AvatarGallery renders both AVATARS (avatar-img-<id>) and INTERPRETERS (interpreters container + interpreter-img-<id>) — images loaded with naturalWidth=480, no broken images."
+  ],
+  "updated_files": ["/app/backend/tests/test_real_clips_video_analysis.py (new, 12 tests)"],
+  "success_rate": {"backend": "100% (22/22 across 2 test files)", "frontend": "100% of executed scenarios (native recordAsync + translator-cam-timer badge require a device build — not testable on web, per spec)"},
+  "seed_data_creation": "Uses existing dev test phones +52 5550001111 and +52 5550002222 (OTP 123456). test_sign_video_analysis_save_persists_message adds one sign_to_text message per run — cheap, indistinguishable from normal user usage.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Reusable tests: /app/backend/tests/test_real_clips_video_analysis.py (needs EXPO_PUBLIC_BACKEND_URL env). Fixture clips live at /app/backend/media/segments/clip-*.mp4 — the largest one is used automatically (real ASL 'thank you'). Native video recording (expo-camera recordAsync) and the translator-cam-timer 'Grabando… Xs / 15s' badge CANNOT be exercised on web preview — must be tested with an Expo dev-client build on device. Camera preview + switch button do render on web when browser permission is granted (ctx.grant_permissions).",
+  "rca_of_issue": "N/A — no failures. Only observations: (1) one benign RN-Web deprecation warning for `pointerEvents` prop, (2) a single 404 on Traductor for an unrelated resource (not the iteration's endpoints)."
+}
