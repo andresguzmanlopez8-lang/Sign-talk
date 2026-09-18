@@ -417,7 +417,8 @@ def _clip_segment(url: str) -> Path:
     if _valid(seg):
         return seg
     src = _download(url, CLIP_DIR / f"{key}{Path(url).suffix or '.gif'}")
-    _ffmpeg(["-ignore_loop", "0", "-t", str(MAX_CLIP_SECONDS), "-i", str(src), "-vf", SEG_VF, *SEG_ENC, str(seg)])
+    loop_args = ["-ignore_loop", "0"] if src.suffix.lower() == ".gif" else []
+    _ffmpeg([*loop_args, "-t", str(MAX_CLIP_SECONDS), "-i", str(src), "-vf", SEG_VF, *SEG_ENC, str(seg)])
     if not _valid(seg):
         raise RuntimeError(f"Clip segment empty for {url}")
     return seg

@@ -8,6 +8,8 @@ LSM (Spanish) has no open source with direct files yet → 2D avatar fallback.
 """
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Dict, Optional
 
 from gestures import normalize
@@ -74,9 +76,25 @@ for _keys, _file in _EN_FILES.items():
     for _k in _keys.split("|"):
         CLIPS["en"][normalize(_k)] = LIFEPRINT + _file
 
+# LSM (Spanish, Mexico): Spread the Sign — European Sign Language Centre (non-profit educational dictionary).
+# Catalog built by fetch_lsm_clips.py (exact word/phrase matches only) → clips_es.json
+CREDIT_ES = "Clip LSM: Spread the Sign (European Sign Language Centre)"
+_ES_JSON = Path(__file__).parent / "clips_es.json"
+if _ES_JSON.exists():
+    for _key, _entry in json.loads(_ES_JSON.read_text()).items():
+        CLIPS["es"][normalize(_key)] = _entry["url"]
+# Spanish synonyms that share the same LSM sign
+for _alias, _base in {"ayuda": "ayudar", "necesito": "necesitar", "puedo": "poder", "madre": "mama", "padre": "papa",
+                      "medico": "doctor", "amiga": "amigo", "hogar": "casa", "tomar": "beber", "contento": "feliz",
+                      "lento": "despacio", "minutos": "minuto", "otra vez": "repetir", "comida": "comer"}.items():
+    if _base in CLIPS["es"] and _alias not in CLIPS["es"]:
+        CLIPS["es"][_alias] = CLIPS["es"][_base]
+
 INTERPRETERS = [
     {"id": "lifeprint-asl", "name": "Intérprete ASL · Bill Vicars", "language": "en", "credit": CREDIT_EN,
      "preview_key": normalize("thank you")},
+    {"id": "spreadthesign-lsm", "name": "Intérprete LSM · Spread the Sign", "language": "es", "credit": CREDIT_ES,
+     "preview_key": normalize("hola")},
 ]
 
 
