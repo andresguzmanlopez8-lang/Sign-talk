@@ -7,11 +7,11 @@ import { colors, spacing, radius } from "@/src/theme";
 import { useLang } from "@/src/lang";
 import { useSignSpeed, SPEED_RATE, SPEED_ORDER, SignSpeed } from "@/src/signSpeed";
 
-type Props = { uri: string; testID?: string; style?: StyleProp<ViewStyle> };
+type Props = { uri: string; testID?: string; style?: StyleProp<ViewStyle>; credits?: string[] | null };
 
 /** Native video player embedded inside a chat bubble (never opens a link / leaves the app).
  *  Includes the shared avatar speed selector (lenta / normal / rápida) to learn at your own pace. */
-export default function BubbleVideo({ uri, testID, style }: Props) {
+export default function BubbleVideo({ uri, testID, style, credits }: Props) {
   const { t } = useLang();
   const [speed, setSpeed] = useSignSpeed();
   const [ready, setReady] = useState(false);
@@ -41,6 +41,7 @@ export default function BubbleVideo({ uri, testID, style }: Props) {
   const speedLabel = speed === "slow" ? t.speedSlow : speed === "fast" ? t.speedFast : t.speedNormal;
 
   return (
+    <View style={style ? undefined : styles.block}>
     <View style={[styles.wrap, style]} testID={testID ?? "bubble-video"}>
       <VideoView
         player={player}
@@ -71,11 +72,19 @@ export default function BubbleVideo({ uri, testID, style }: Props) {
         <Text style={styles.playText}>{playing ? "⏸" : "▶"}</Text>
       </Pressable>
     </View>
+    {!!credits?.length && (
+      <Text style={styles.credits} testID={`${testID ?? "bubble-video"}-credits`} numberOfLines={2}>
+        🎥 {credits.join(" · ")}
+      </Text>
+    )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { width: 220, height: 220, borderRadius: radius.md, overflow: "hidden", backgroundColor: colors.surfaceTertiary, marginBottom: spacing.sm },
+  block: { marginBottom: spacing.sm },
+  wrap: { width: 220, height: 220, borderRadius: radius.md, overflow: "hidden", backgroundColor: colors.surfaceTertiary },
+  credits: { color: "rgba(255,255,255,0.65)", fontSize: 10, marginTop: 4, maxWidth: 220 },
   video: { width: "100%", height: "100%" },
   overlay: { position: "absolute", inset: 0, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceTertiary },
   speedBtn: { position: "absolute", left: spacing.sm, bottom: spacing.sm, minHeight: 32, paddingHorizontal: spacing.sm, borderRadius: radius.pill, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center" },

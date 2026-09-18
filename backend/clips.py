@@ -98,5 +98,18 @@ INTERPRETERS = [
 ]
 
 
+def credits_for(language: str, labels) -> list:
+    """Distinct attribution lines for the sources actually used by these word labels."""
+    out = []
+    for label in labels:
+        url = clip_for(language, label)
+        if not url:
+            continue
+        credit = CREDIT_EN if "lifeprint.com" in url else CREDIT_ES if "spreadthesign.com" in url else None
+        if credit and credit not in out:
+            out.append(credit)
+    return out
+
+
 def clip_for(language: str, label: str) -> Optional[str]:
     return CLIPS.get(language, {}).get(normalize(label))

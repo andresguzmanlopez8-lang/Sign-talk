@@ -41,6 +41,7 @@ type Msg = {
   sign_sequence?: string[] | null;
   audio_url?: string | null;
   video_url?: string | null;
+  video_credits?: string[] | null;
   avatar_id?: string | null;
   created_at: string;
 };
@@ -59,6 +60,7 @@ export default function Translator() {
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState("");
   const [avatarVideo, setAvatarVideo] = useState<string | null>(null);
+  const [avatarCredits, setAvatarCredits] = useState<string[] | null>(null);
   const [favorites, setFavorites] = useState<Favorite[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -131,6 +133,7 @@ export default function Translator() {
       const msg = await api.textToSign(phrase, lang);
       setMessages((prev) => [...prev, msg]);
       setAvatarVideo(msg.video_url ?? null);
+      setAvatarCredits(msg.video_credits ?? null);
       notifyMessageSent();
     } catch (e) {
       console.warn(e);
@@ -208,6 +211,7 @@ export default function Translator() {
         const msg = await api.voiceToText(uri, lang);
         setMessages((prev) => [...prev, msg]);
         setAvatarVideo(msg.video_url ?? null);
+      setAvatarCredits(msg.video_credits ?? null);
         notifyMessageSent();
       }
     } catch (e) {
@@ -225,6 +229,7 @@ export default function Translator() {
       const msg = await api.textToSign(text.trim(), lang);
       setMessages((prev) => [...prev, msg]);
       setAvatarVideo(msg.video_url ?? null);
+      setAvatarCredits(msg.video_credits ?? null);
       setText("");
       notifyMessageSent();
     } catch (e) {
@@ -271,7 +276,7 @@ export default function Translator() {
         {item.original_text && item.original_text !== item.translated_text && (
           <Text style={styles.bubbleMeta}>{item.original_text}</Text>
         )}
-        {item.video_url && <BubbleVideo uri={`${api.base}${item.video_url}`} testID={`video-${item.id}`} />}
+        {item.video_url && <BubbleVideo uri={`${api.base}${item.video_url}`} credits={item.video_credits} testID={`video-${item.id}`} />}
         <Text style={styles.bubbleText}>{item.translated_text}</Text>
         <View style={styles.bubbleActions}>
           {!isSign && item.video_url && (
@@ -279,6 +284,7 @@ export default function Translator() {
               onPress={() => {
                 setMode("voice");
                 setAvatarVideo(item.video_url!);
+                setAvatarCredits(item.video_credits ?? null);
               }}
               style={styles.replayBtn}
               testID={`replay-${item.id}`}
@@ -389,7 +395,12 @@ export default function Translator() {
           ) : (
             <View style={styles.avatarWrap} testID="avatar-view">
               {avatarVideo ? (
-                <BubbleVideo key={avatarVideo} uri={`${api.base}${avatarVideo}`} style={styles.avatarVideo} testID="avatar-video" />
+                <>
+                  <BubbleVideo key={avatarVideo} uri={`${api.base}${avatarVideo}`} style={styles.avatarVideo} testID="avatar-video" />
+                  {!!avatarCredits?.length && (
+                    <Text style={styles.avatarCredits} testID="avatar-video-credits" numberOfLines={1}>🎥 {avatarCredits.join(" · ")}</Text>
+                  )}
+                </>
               ) : (
                 <View style={styles.avatarEmpty}>
                   <Text style={styles.avatarEmptyIcon}>🧍</Text>
@@ -587,6 +598,7 @@ const styles = StyleSheet.create({
   primaryBtnText: { color: colors.onBrandPrimary, fontWeight: "700" },
   avatarWrap: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#0a0b0f" },
   avatarVideo: { width: "100%", height: "100%", borderRadius: 0, marginBottom: 0 },
+  avatarCredits: { position: "absolute", top: spacing.sm, left: spacing.md, right: spacing.md, color: "rgba(255,255,255,0.75)", fontSize: 10, textAlign: "center" },
   avatarEmpty: { alignItems: "center", gap: spacing.sm },
   avatarEmptyIcon: { fontSize: 60 },
   avatarEmptyText: { color: colors.onSurfaceTertiary, fontSize: 14 },

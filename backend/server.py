@@ -157,6 +157,7 @@ class Message(BaseModel):
     sign_sequence: Optional[List[str]] = None  # letters/words to animate
     audio_url: Optional[str] = None
     video_url: Optional[str] = None  # server-rendered avatar sign video (MP4)
+    video_credits: Optional[List[str]] = None  # source attribution for real-interpreter clips
     avatar_id: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -526,7 +527,10 @@ async def build_sign_video(text: str, language: str, avatar_id: Optional[str], p
     tokens = await _tokenize_for_signs(text, language)
     if not tokens:
         return None
-    sig = "|".join(f"{t.kind}:{t.label}:{t.handshape.name if t.handshape else '-'}" for t in tokens)
+    sig = "|".join(
+        f"{t.kind}:{t.label}:{t.handshape.name if t.handshape else '-'}:{(clips.clip_for(language, t.label) if t.kind == 'word' else None) or '-'}"
+        for t in tokens
+    )
     key = hashlib.sha256(f"v3|{language}|{avatar['id']}|{sig}".encode()).hexdigest()[:32]
     out = VIDEO_DIR / f"{key}.mp4"
 
@@ -541,6 +545,11 @@ async def build_sign_video(text: str, language: str, avatar_id: Optional[str], p
                 if _missing():
                     await run_in_threadpool(_render_sign_video, tokens, language, avatar, out)
     return f"/api/media/videos/{key}.mp4"
+
+async def sign_video_credits(text: str, language: str) -> List[str]:
+    """Attribution lines for the real-interpreter sources used in a message video (educational licenses)."""
+    tokens = await _tokenize_for_signs(text, language)
+    return clips.credits_for(language, [t.label for t in tokens if t.kind == "word"])
 
 AVATAR_PORTRAIT_DIR = MEDIA_DIR / "avatars"
 
@@ -1048,6 +1057,7 @@ async def text_to_sign(req: TextToSignReq, user=Depends(get_current_user)):
         translated_text=req.text,
         sign_sequence=seq,
         video_url=video_url,
+        video_credits=await sign_video_credits(req.text, req.language) if video_url else None,
         avatar_id=avatar_id,
     )
     await db.messages.insert_one(msg.model_dump())
@@ -1096,6 +1106,7 @@ async def voice_to_text(
         translated_text=text,
         sign_sequence=seq,
         video_url=video_url,
+        video_credits=await sign_video_credits(text, lang) if video_url else None,
         avatar_id=avatar_id,
     )
     await db.messages.insert_one(msg.model_dump())
@@ -1744,8 +1755,10 @@ async def chat_sign_video(mid: str, user=Depends(get_current_user)):
         raise HTTPException(424, "No se pudo generar el video del avatar. Inténtalo de nuevo.")
     if not video_url:
         raise HTTPException(422, "Este mensaje no tiene letras para mostrar en señas")
-    await db.chat_messages.update_one({"id": mid}, {"$set": {"video_url": video_url}})
+    credits = await sign_video_credits(msg["text"], msg["language"])
+    await db.chat_messages.update_one({"id": mid}, {"$set": {"video_url": video_url, "video_credits": credits}})
     msg["video_url"] = video_url
+    msg["video_credits"] = credits
     return _chat_msg_view(msg)
 
 # ------------------- TTS -------------------

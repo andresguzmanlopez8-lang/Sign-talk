@@ -13,6 +13,7 @@ export type ChatMsg = {
   language: "es" | "en";
   signs?: string[] | null;
   video_url?: string | null;
+  video_credits?: string[] | null;
   avatar_id?: string | null;
   created_at: string;
 };
@@ -44,7 +45,7 @@ export default function ChatBubble({ msg, mine, videoShown, loadingVideo, playin
         {KIND_ICON[msg.kind]} {kindLabel}
         {msg.kind === "sign" && msg.signs?.length ? ` · ${msg.signs.join(" ")}` : ""}
       </Text>
-      {videoShown && msg.video_url && <BubbleVideo uri={`${api.base}${msg.video_url}`} testID={`chat-video-${msg.id}`} />}
+      {videoShown && msg.video_url && <BubbleVideo uri={`${api.base}${msg.video_url}`} credits={msg.video_credits} testID={`chat-video-${msg.id}`} />}
       <Text style={styles.text} testID={`chat-text-${msg.id}`}>{msg.text}</Text>
       <View style={styles.actions}>
         <Pressable
