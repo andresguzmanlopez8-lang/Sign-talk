@@ -1,4 +1,4 @@
-name: Build Android AAB
+name: Build Android AAB (Expo)
 
 on:
   push:
@@ -13,27 +13,37 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
       - name: Install dependencies
-        run: flutter pub get
+        run: npm install
         working-directory: frontend
 
-      - name: Build App Bundle (AAB)
-        run: flutter build appbundle --release --no-codesign
+      - name: Generate Android native project
+        run: npx expo prebuild --platform android
+        working-directory: frontend
+
+      - name: Build Android App Bundle (AAB)
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew bundleRelease
         working-directory: frontend
 
       - name: Upload AAB Artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-release-aab
-          path: '**/build/app/outputs/bundle/release/app-release.aab'
+          path: 'frontend/android/app/build/outputs/bundle/release/app-release.aab'
