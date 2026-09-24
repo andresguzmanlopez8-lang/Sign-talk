@@ -431,37 +431,91 @@ def _clip_thumbnail(url: str) -> Path:
         _ffmpeg(["-i", str(_clip_segment(url)), "-ss", "0.6", "-frames:v", "1", str(thumb)], timeout=60)
     return thumb
 
-def _avatar_segment(token: avatar2d.Token, avatar: dict) -> Path:
-    """2D full-body avatar fallback for a single sign (cached per sign + presenter)."""
-    key = hashlib.sha1(f"v3|{avatar['id']}|{token.kind}|{token.label}|{token.handshape.name if token.handshape else '-'}".encode()).hexdigest()
-    seg = SEG_DIR / f"av-{key}.mp4"
+FINGERSPELL_SECONDS = 0.9
+
+def _fingerspell_frame(letter: str, handshape: Optional[Path], scale: float) -> "Image.Image":
+    from PIL import Image, ImageDraw, ImageFont
+    img = Image.new("RGB", (480, 480), (13, 14, 18))
+    d = ImageDraw.Draw(img)
+    hand = None
+    if handshape and handshape.exists():
+        try:
+            src = Image.open(handshape).convert("RGB")
+            side = min(src.size)
+            src = src.crop(((src.width - side) // 2, (src.height - side) // 2, (src.width + side) // 2, (src.height + side) // 2))
+            size = int(400 * scale)
+            hand = src.resize((size, size), Image.LANCZOS)
+        except Exception:
+            hand = None
+    if hand is not None:
+        img.paste(hand, ((480 - hand.width) // 2, (440 - hand.height) // 2))
+    try:
+        font = ImageFont.truetype(avatar2d.FONT_PATH, 44 if hand is not None else 200)
+    except OSError:
+        font = ImageFont.load_default()
+    tw = d.textlength(letter, font=font)
+    if hand is not None:
+        d.rounded_rectangle([240 - tw / 2 - 20, 412, 240 + tw / 2 + 20, 470], radius=18, fill=(255, 87, 34))
+        d.text((240 - tw / 2, 418), letter, font=font, fill=(255, 255, 255))
+    else:
+        d.text((240 - tw / 2, 130), letter, font=font, fill=(255, 255, 255))
+    return img
+
+def _fingerspell_segment(token: avatar2d.Token) -> Path:
+    """Dactylology fallback: the real handshape picture of the letter, letter by letter (no cartoon)."""
+    key = hashlib.sha1(f"fs1|{token.label}|{token.handshape.name if token.handshape else '-'}".encode()).hexdigest()
+    seg = SEG_DIR / f"fs-{key}.mp4"
     if _valid(seg):
         return seg
     work = SEG_DIR / f"tmp-{key}"
     shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True, exist_ok=True)
     try:
-        if avatar2d.render_frames([token], avatar2d.LOOKS.get(avatar["id"], avatar2d.DEFAULT_LOOK), work, intro=False) == 0:
-            raise RuntimeError("No frames rendered")
-        _ffmpeg(["-framerate", str(avatar2d.FPS), "-i", str(work / "frame_%04d.png"), "-vf", SEG_VF, *SEG_ENC, str(seg)])
+        n = int(FINGERSPELL_SECONDS * 15)
+        for i in range(n):
+            t = i / max(1, n - 1)
+            scale = 0.9 + 0.1 * min(1.0, t / 0.25)  # quick "pop-in", then hold
+            _fingerspell_frame(token.label, token.handshape, scale).save(work / f"frame_{i:04d}.png")
+        _ffmpeg(["-framerate", "15", "-i", str(work / "frame_%04d.png"), "-vf", SEG_VF, *SEG_ENC, str(seg)])
     finally:
         shutil.rmtree(work, ignore_errors=True)
     if not _valid(seg):
-        raise RuntimeError("Avatar segment empty")
+        raise RuntimeError("Fingerspelling segment empty")
     return seg
 
-def _render_sign_video(tokens: List[avatar2d.Token], language: str, avatar: dict, out_path: Path) -> None:
-    """Message video = concat of one segment per sign: real interpreter clip when available (clips.py),
-    otherwise the 2D avatar. Produces ONE continuous MP4 (+ WebM twin for web)."""
-    segments: List[Path] = []
-    for tok in tokens:
-        url = clips.clip_for(language, tok.label) if tok.kind == "word" else None
+async def _letters_for(word: str, language: str) -> List[avatar2d.Token]:
+    """Fingerspelling tokens (with handshape pictures) for a word that has no real clip."""
+    letters = [c.upper() for c in word if c.isalpha()]
+    entries = await db.dictionary.find({"language": language, "kind": "letter", "label": {"$in": sorted(set(letters))}}, {"_id": 0}).to_list(100)
+    by_label = {e["label"].upper(): e for e in entries}
+    out: List[avatar2d.Token] = []
+    for c in letters:
+        e = by_label.get(c) or by_label.get(c.replace("Ñ", "N"))
+        url = (e or {}).get("gif_url") or (e or {}).get("image_url")
+        path = None
         if url:
             try:
-                segments.append(_clip_segment(url))
-                continue
-            except Exception as e:
-                logging.warning(f"Real clip failed for '{tok.label}', using avatar fallback: {e}")
-        segments.append(_avatar_segment(tok, avatar))
+                path = await run_in_threadpool(_download, url, GIF_CACHE / f"{hashlib.sha1(url.encode()).hexdigest()}{Path(url).suffix or '.gif'}")
+            except Exception as ex:
+                logging.warning(f"handshape download failed for {c}: {ex}")
+        out.append(avatar2d.Token("letter", c, path))
+    return out
+
+def _render_sign_video(tokens: List[avatar2d.Token], language: str, out_path: Path) -> None:
+    """Message video = concat of one segment per sign: real interpreter clip for known words/phrases,
+    fingerspelling handshapes (letter by letter) for everything else. ONE continuous MP4 (+ WebM twin)."""
+    segments: List[Path] = []
+    for tok in tokens:
+        if tok.kind == "word":
+            url = clips.clip_for(language, tok.label)
+            if url:
+                try:
+                    segments.append(_clip_segment(url))
+                    continue
+                except Exception as e:
+                    logging.warning(f"Real clip failed for '{tok.label}': {e}")
+            continue  # word without clip is never rendered as a word (tokenizer fingerspells it)
+        segments.append(_fingerspell_segment(tok))
     if not segments:
         raise RuntimeError("Nothing to render")
     list_file = out_path.with_suffix(".txt")
@@ -493,7 +547,7 @@ async def _tokenize_for_signs(text: str, language: str) -> List[avatar2d.Token]:
         matched = False
         for n in range(min(gestures.MAX_PHRASE_WORDS, len(words) - i), 0, -1):
             key = " ".join(norm[i:i + n])
-            if key in gestures.WORD_GESTURES:
+            if clips.clip_for(language, key):
                 tokens.append(avatar2d.Token("word", " ".join(words[i:i + n]).lower()))
                 signs += 1
                 i += n
@@ -531,7 +585,7 @@ async def build_sign_video(text: str, language: str, avatar_id: Optional[str], p
         f"{t.kind}:{t.label}:{t.handshape.name if t.handshape else '-'}:{(clips.clip_for(language, t.label) if t.kind == 'word' else None) or '-'}"
         for t in tokens
     )
-    key = hashlib.sha256(f"v3|{language}|{avatar['id']}|{sig}".encode()).hexdigest()[:32]
+    key = hashlib.sha256(f"v4|{language}|{sig}".encode()).hexdigest()[:32]
     out = VIDEO_DIR / f"{key}.mp4"
 
     def _missing() -> bool:
@@ -539,11 +593,11 @@ async def build_sign_video(text: str, language: str, avatar_id: Optional[str], p
 
     if _missing():
         if priority:
-            await run_in_threadpool(_render_sign_video, tokens, language, avatar, out)
+            await run_in_threadpool(_render_sign_video, tokens, language, out)
         else:
             async with _free_render_queue:
                 if _missing():
-                    await run_in_threadpool(_render_sign_video, tokens, language, avatar, out)
+                    await run_in_threadpool(_render_sign_video, tokens, language, out)
     return f"/api/media/videos/{key}.mp4"
 
 async def sign_video_credits(text: str, language: str) -> List[str]:
