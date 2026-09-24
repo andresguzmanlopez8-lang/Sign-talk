@@ -24,8 +24,8 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK Licenses
+        run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
       - name: Install dependencies
         run: npm install
@@ -47,3 +47,4 @@ jobs:
         with:
           name: app-release-aab
           path: 'frontend/android/app/build/outputs/bundle/release/app-release.aab'
+
