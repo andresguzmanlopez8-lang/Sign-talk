@@ -6,6 +6,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/ndk /opt/ghc /usr/local/.ghcup /usr/local/lib/node_modules /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -18,13 +21,26 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: "zulu"
-          java-version: "17"
+          java-version: "21"
 
       - name: Accept Android SDK Licenses
         run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
       - name: Decode Android Keystore
         run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $RUNNER_TEMP/release.keystore
+
+      - name: Verify keystore integrity
+        run: |
+          echo "Tamaño del archivo decodificado (bytes):"
+          wc -c < $RUNNER_TEMP/release.keystore
+          echo "Debe ser 2804 bytes. Probando abrir el keystore..."
+          keytool -list -v -keystore $RUNNER_TEMP/release.keystore -storepass "${{ secrets.KEYSTORE_PASSWORD }}" | head -20
+
+      - name: Configure app environment variables
+        working-directory: frontend
+        run: |
+          echo "EXPO_PUBLIC_BACKEND_URL=https://sign-talk-16.emergent.host" >> .env
+          echo "EXPO_PUBLIC_PREMIUM_DEV_MODE=true" >> .env
 
       - name: Install dependencies
         working-directory: frontend
@@ -36,13 +52,10 @@ jobs:
 
       - name: Build Signed App Bundle
         working-directory: frontend/android
-        run: |
-          chmod +x gradlew
-          ./gradlew bundleRelease -Pandroid.injected.signing.store.file=$RUNNER_TEMP/release.keystore -Pandroid.injected.signing.store.password="${{ secrets.KEYSTORE_PASSWORD }}" -Pandroid.injected.signing.key.alias="${{ secrets.KEY_ALIAS }}" -Pandroid.injected.signing.key.password="${{ secrets.KEY_PASSWORD }}"
+        run: chmod +x gradlew && ./gradlew bundleRelease -Pandroid.injected.signing.store.file=$RUNNER_TEMP/release.keystore -Pandroid.injected.signing.store.password="${{ secrets.KEYSTORE_PASSWORD }}" -Pandroid.injected.signing.key.alias="${{ secrets.KEY_ALIAS }}" -Pandroid.injected.signing.key.password="${{ secrets.KEY_PASSWORD }}"
 
       - name: Upload AAB Artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-release-aab
           path: frontend/android/app/build/outputs/bundle/release/app-release.aab
-          
